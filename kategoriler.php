@@ -10,6 +10,9 @@ $duzenlenecekKat = null;
 
 // POST İşlemleri
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
+    
     $subCatsString = '';
     if (isset($_POST['alt_kat']) && is_array($_POST['alt_kat'])) {
         $doluOlanlar = array_filter($_POST['alt_kat'], function($value) { return !empty(trim($value)); });
@@ -72,6 +75,7 @@ require 'header.php';
                     <?= $duzenleModu ? 'Düzenle' : 'Yeni Kategori' ?>
                 </h3>
                 <form method="POST" id="kategoriForm" class="space-y-4">
+                    <?php echo csrfAlaniniEkle(); ?>
                     <?php if($duzenleModu): ?>
                         <input type="hidden" name="guncelle" value="1"><input type="hidden" name="id" value="<?= $duzenlenecekKat['id'] ?>">
                     <?php else: ?>
@@ -123,6 +127,7 @@ require 'header.php';
                     <div class="flex flex-col gap-2 items-end opacity-60 group-hover:opacity-100 transition">
                         <a href="?duzenle=<?= $k['id'] ?>" class="text-blue-600 dark:text-blue-400 text-xs font-bold hover:underline">DÜZENLE</a>
                         <form method="POST" onsubmit="return confirm('Silinsin mi?')">
+                            <?php echo csrfAlaniniEkle(); ?>
                             <input type="hidden" name="sil_id" value="<?= $k['id'] ?>">
                             <button class="text-red-500 dark:text-red-400 text-xs hover:underline">SİL</button>
                         </form>
