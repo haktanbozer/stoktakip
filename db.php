@@ -24,14 +24,24 @@ function yukleEnv($yol) {
 // .env dosyasını yükle
 yukleEnv(__DIR__ . '/.env');
 
-// 2. Session ve Klasör Ayarları
+// 2. GÜVENLİ OTURUM (SESSION) VE KLASÖR AYARLARI [GÜNCELLENDİ]
 $session_folder = __DIR__ . '/sessions';
 if (!file_exists($session_folder)) { mkdir($session_folder, 0755, true); }
 session_save_path($session_folder);
+
+// Çerez Parametrelerini Güvenli Hale Getir (HttpOnly ve Secure - Mozilla Observatory Puanı İçin Kritik)
+session_set_cookie_params([
+    'lifetime' => 0,            // Tarayıcı kapanınca silinsin
+    'path' => '/',              // Tüm sitede geçerli
+    'domain' => '',             // Mevcut domain (otomatik)
+    'secure' => true,           // Sadece HTTPS üzerinden gönder (SSL Yoksa false yapın!)
+    'httponly' => true,         // JavaScript ile erişilemez (XSS Koruması)
+    'samesite' => 'Strict'      // CSRF koruması için
+]);
+
 session_start();
 
-// 2.1. CSRF TOKEN OLUŞTURMA (ZAMAN AŞIMI KONTROLLÜ - YENİ)
-// Token yoksa VEYA tokenın ömrü 1 saati (3600 saniye) geçtiyse yenile
+// 2.1. CSRF TOKEN OLUŞTURMA (ZAMAN AŞIMI KONTROLLÜ)
 if (empty($_SESSION['csrf_token']) || !isset($_SESSION['csrf_token_time']) || (time() - $_SESSION['csrf_token_time']) > 3600) {
     if (function_exists('random_bytes')) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -54,7 +64,7 @@ function sistemLogla($mesaj, $seviye = 'ERROR') {
     error_log($logIcerigi, 3, $logDosyasi);
 }
 
-// --- GLOBAL HATA YAKALAYICILAR (YENİ EKLENDİ) ---
+// --- GLOBAL HATA YAKALAYICILAR ---
 
 // 1. Uyarılar ve Noticeler için
 set_error_handler(function($errno, $errstr, $errfile, $errline) {
@@ -69,7 +79,7 @@ set_error_handler(function($errno, $errstr, $errfile, $errline) {
     $mesaj = "$errstr | Dosya: $errfile | Satır: $errline";
     sistemLogla($mesaj, $seviye);
     
-    return false; // Standart PHP işlemine devam et (Ekranda görünmesini engellemek için true yapabilirsiniz)
+    return false; // Standart PHP işlemine devam et
 });
 
 // 2. Yakalanmamış İstisnalar için
@@ -118,7 +128,7 @@ function auditLog($islem, $detay) {
     }
 }
 
-// 3. Veritabanı Bağlantısı (Artık .env'den okuyor)
+// 3. Veritabanı Bağlantısı (.env'den okuyor)
 $host = getenv('DB_HOST');
 $db   = getenv('DB_NAME');
 $user = getenv('DB_USER');
@@ -178,7 +188,6 @@ function csrfKontrol($token) {
 }
 
 function csrfAlaniniEkle() {
-    // Burada tekrar kontrol etmeye gerek yok, sayfa başında zaten set edildi.
     return '<input type="hidden" name="csrf_token" value="' . htmlspecialchars($_SESSION['csrf_token']) . '">';
 }
 
