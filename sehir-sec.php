@@ -4,6 +4,9 @@ girisKontrol();
 
 // Şehir Seçildiğinde
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
+    
     $sehir_id = $_POST['sehir_id'];
     
     if ($sehir_id == 'tum') {
@@ -73,6 +76,7 @@ $sehirler = $pdo->query("SELECT * FROM cities ORDER BY name ASC")->fetchAll();
         </div>
 
         <form method="POST" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <?php echo csrfAlaniniEkle(); ?>
             <button type="submit" name="sehir_id" value="tum" class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border-2 border-transparent dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md transition text-center group">
                 <div class="text-4xl mb-3">🌍</div>
                 <div class="font-bold text-slate-700 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">Tüm Şehirler</div>
