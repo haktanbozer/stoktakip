@@ -47,6 +47,10 @@ try {
 
     // 6. HIZLI TÜKETİM (Tüketim Geçmişi Kaydı ile birlikte)
     elseif ($islem === 'hizli_tuket') {
+        // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+        // AJAX isteğinin GET parametresi olarak token'ı taşıması gerekir.
+        csrfKontrol($_GET['token'] ?? $_GET['csrf_token'] ?? ''); 
+        
         $adet = isset($_GET['adet']) ? (float)$_GET['adet'] : 1;
         
         if ($adet <= 0) $adet = 1;
