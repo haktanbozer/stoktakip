@@ -1,6 +1,7 @@
 <?php
 // ajax.php - Frontend ile Arka Plan Haberleşmesi
 require 'db.php';
+girisKontrol(); // KRİTİK GÜVENLİK DÜZELTMESİ: Oturum kontrolü eklendi
 
 // JSON formatında yanıt vereceğimizi belirtelim
 header('Content-Type: application/json; charset=utf-8');
