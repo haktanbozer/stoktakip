@@ -10,30 +10,25 @@ if (isset($_SESSION['user_id'])) {
 $error = '';
 $ip_address = $_SERVER['REMOTE_ADDR'];
 
-// --- RATE LIMITING KONTROLÜ (Giriş işleminden önce bak) ---
-// Bu IP daha önce engellenmiş mi?
+// --- RATE LIMITING KONTROLÜ ---
 $stmtCheck = $pdo->prepare("SELECT * FROM login_attempts WHERE ip_address = ?");
 $stmtCheck->execute([$ip_address]);
 $attempt = $stmtCheck->fetch();
 
 if ($attempt) {
-    // Eğer kilit süresi varsa ve henüz dolmadıysa
     if ($attempt['locked_until'] && strtotime($attempt['locked_until']) > time()) {
         $kalanDakika = ceil((strtotime($attempt['locked_until']) - time()) / 60);
         $error = "⛔ Çok fazla başarısız deneme! Güvenliğiniz için $kalanDakika dakika beklemelisiniz.";
     }
 }
 
-// Hata yoksa (Engelli değilse) POST işlemini al
 if (empty($error) && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    // CSRF token kontrolü
     csrfKontrol($_POST['csrf_token'] ?? '');
     
     $username = $_POST['username'] ?? '';
     $password = $_POST['password'] ?? '';
     $remember_me = isset($_POST['remember_me']);
 
-    // Kullanıcıyı bul
     $stmt = $pdo->prepare("SELECT id, username, password, role FROM users WHERE username = ?");
     $stmt->execute([$username]);
     $user = $stmt->fetch();
@@ -41,18 +36,22 @@ if (empty($error) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($user && password_verify($password, $user['password'])) {
         // --- BAŞARILI GİRİŞ ---
         
-        // 1. Başarılı olduğu için hata sayacını sıfırla (IP'yi temizle)
+        // 1. GÜVENLİK: Session ID'yi yenile (Session Fixation Koruması)
+        // Giriş başarılı olduğunda eski session ID'yi silip yenisini veriyoruz.
+        session_regenerate_id(true);
+
+        // 2. Hata sayacını sıfırla
         $pdo->prepare("DELETE FROM login_attempts WHERE ip_address = ?")->execute([$ip_address]);
 
-        // 2. Oturumu Başlat
+        // 3. Oturumu Başlat
         $_SESSION['user_id'] = $user['id'];
         $_SESSION['username'] = $user['username'];
         $_SESSION['role'] = $user['role'];
         
-        // Audit Log (Başarılı Giriş)
+        // Audit Log
         if(function_exists('auditLog')) auditLog('LOGIN', "Kullanıcı giriş yaptı: {$user['username']}");
 
-        // 3. Beni Hatırla
+        // 4. Beni Hatırla
         if ($remember_me) {
             $token = bin2hex(random_bytes(32)); 
             $expiry = time() + (30 * 24 * 60 * 60);
@@ -67,33 +66,23 @@ if (empty($error) && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } else {
         // --- BAŞARISIZ GİRİŞ ---
-        
-        $limit = 5; // Deneme hakkı
-        $lockout_time = 15; // Dakika
+        $limit = 5; 
+        $lockout_time = 15; 
         
         if ($attempt) {
-            // Zaten kaydı var, sayısını artır
             $new_count = $attempt['attempts'] + 1;
-            
             if ($new_count >= $limit) {
-                // LİMİT AŞILDI: Kilitle
                 $locked_until = date('Y-m-d H:i:s', time() + ($lockout_time * 60));
                 $stmtUpd = $pdo->prepare("UPDATE login_attempts SET attempts = ?, locked_until = ?, last_attempt = NOW() WHERE ip_address = ?");
                 $stmtUpd->execute([$new_count, $locked_until, $ip_address]);
-                
                 $error = "⛔ Çok fazla deneme yaptınız. $lockout_time dakika engellendiniz.";
-                
-                // Güvenlik Logu
                 if(function_exists('sistemLogla')) sistemLogla("Brute Force Şüphesi: IP $ip_address engellendi.", 'SECURITY');
-                
             } else {
-                // Henüz limit dolmadı, artır
                 $pdo->prepare("UPDATE login_attempts SET attempts = attempts + 1, last_attempt = NOW() WHERE ip_address = ?")->execute([$ip_address]);
                 $kalan = $limit - $new_count;
                 $error = "Hatalı giriş! Kalan hakkınız: $kalan";
             }
         } else {
-            // İlk hatalı deneme, kayıt oluştur
             $pdo->prepare("INSERT INTO login_attempts (ip_address, attempts, last_attempt) VALUES (?, 1, NOW())")->execute([$ip_address]);
             $error = "Hatalı kullanıcı adı veya şifre! (Kalan hak: " . ($limit - 1) . ")";
         }
