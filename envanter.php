@@ -270,12 +270,12 @@ require 'header.php';
                                 
                                 <td class="px-4 py-3">
                                     <div class="flex items-center gap-2">
-                                        <button onclick="hizliTuket(this, '<?= $urun['id'] ?>', '<?= $_SESSION['csrf_token'] ?>')" class="w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center transition font-bold text-lg leading-none pb-1 shadow-sm border border-red-200 dark:border-red-800" title="Tüket">
+                                        <button onclick="hizliTuket(this, '<?= $urun['id'] ?>', '<?= $_SESSION['csrf_token'] ?>')" class="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center transition font-bold text-xl leading-none pb-0 shadow-sm border border-red-200 dark:border-red-800" title="Tüket">
                                             -
                                         </button>
 
                                         <button onclick="transferDialog('<?= $urun['id'] ?>', '<?= (float)$urun['quantity'] ?>', '<?= htmlspecialchars($urun['unit']) ?>', '<?= htmlspecialchars($urun['name']) ?>', '<?= $urun['city_id'] ?>', '<?= $urun['location_id'] ?>', '<?= $urun['room_id'] ?>', '<?= $urun['cabinet_id'] ?>', '<?= $_SESSION['csrf_token'] ?>')" 
-                                                class="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 hover:bg-blue-500 hover:text-white flex items-center justify-center transition font-bold text-sm leading-none pb-1 shadow-sm border border-blue-200 dark:border-blue-800" title="Hızlı Transfer">
+                                                class="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 hover:bg-blue-500 hover:text-white flex items-center justify-center transition font-bold text-lg leading-none pb-0 shadow-sm border border-blue-200 dark:border-blue-800" title="Hızlı Transfer">
                                             ⇄
                                         </button>
                                         
