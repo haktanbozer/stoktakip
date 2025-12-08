@@ -14,27 +14,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     try {
         if (isset($_POST['islem'])) {
+            
+            // --- GÜVENLİK VE VALİDASYON (YENİ EKLENDİ) ---
+            // Tüm ekleme işlemlerinde 'name' alanı kullanılıyor, burada merkezi kontrol yapalım.
+            $isim = $_POST['name'] ?? '';
+            
+            // 1. Uzunluk Kontrolü
+            if (strlen($isim) > 100) {
+                throw new Exception("❌ İsim çok uzun! Maksimum 100 karakter kullanabilirsiniz.");
+            }
+            
+            // 2. Karakter Kontrolü (Türkçe karakterler, rakamlar, boşluk ve tire izinli)
+            if (!preg_match('/^[a-zA-Z0-9ğüşıöçĞÜŞİÖÇ\s\-]+$/u', $isim)) {
+                throw new Exception("❌ İsimde geçersiz karakterler var! Sadece harf, rakam ve boşluk kullanın.");
+            }
+            // --------------------------------------------------
+
             $islem = $_POST['islem'];
             $id = uniqid('loc_');
             $logDetay = '';
 
             if ($islem === 'sehir_ekle') {
                 $stmt = $pdo->prepare("INSERT INTO cities (id, name) VALUES (?, ?)");
-                $stmt->execute([$id, $_POST['name']]);
+                $stmt->execute([$id, $isim]);
                 $mesaj = "✅ Şehir eklendi.";
-                $logDetay = "Şehir eklendi: " . $_POST['name'];
+                $logDetay = "Şehir eklendi: " . $isim;
             }
             elseif ($islem === 'mekan_ekle') {
                 $stmt = $pdo->prepare("INSERT INTO locations (id, city_id, name, type) VALUES (?, ?, ?, ?)");
-                $stmt->execute([$id, $_POST['city_id'], $_POST['name'], 'Ev']); 
+                $stmt->execute([$id, $_POST['city_id'], $isim, 'Ev']); 
                 $mesaj = "✅ Mekan eklendi.";
-                $logDetay = "Mekan eklendi: " . $_POST['name'];
+                $logDetay = "Mekan eklendi: " . $isim;
             }
             elseif ($islem === 'oda_ekle') {
                 $stmt = $pdo->prepare("INSERT INTO rooms (id, location_id, name) VALUES (?, ?, ?)");
-                $stmt->execute([$id, $_POST['location_id'], $_POST['name']]);
+                $stmt->execute([$id, $_POST['location_id'], $isim]);
                 $mesaj = "✅ Oda eklendi.";
-                $logDetay = "Oda eklendi: " . $_POST['name'];
+                $logDetay = "Oda eklendi: " . $isim;
             }
             elseif ($islem === 'dolap_ekle') {
                 $stmt = $pdo->prepare("INSERT INTO cabinets (id, room_id, name, height, width, depth, shelf_count, door_count, drawer_count, cooler_volume, freezer_volume, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
@@ -46,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute([
                     $id, 
                     $_POST['room_id'], 
-                    $_POST['name'],
+                    $isim,
                     $_POST['height'],
                     $_POST['width'],
                     $_POST['depth'],
@@ -58,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $type
                 ]);
                 $mesaj = "✅ Dolap/Buzdolabı tanımlandı.";
-                $logDetay = "Dolap eklendi: " . $_POST['name'];
+                $logDetay = "Dolap eklendi: " . $isim;
             }
             
             // Audit Log (Ekleme)
@@ -86,8 +102,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-    } catch (PDOException $e) {
-        $mesaj = "❌ Hata: " . $e->getMessage();
+    } catch (Exception $e) { // PDOException yerine Exception kullanıldı (Validasyon hataları için)
+        // Hata mesajı Validasyon'dan geliyorsa olduğu gibi, DB'den geliyorsa "Hata:" önekiyle
+        $hataMesaji = $e->getMessage();
+        if (strpos($hataMesaji, '❌') === false) {
+            $mesaj = "❌ Hata: " . $hataMesaji;
+        } else {
+            $mesaj = $hataMesaji;
+        }
     }
 }
 
@@ -117,7 +139,7 @@ require 'header.php';
         <h2 class="text-2xl font-bold text-slate-800 dark:text-white mb-6 transition-colors">Mekan ve Dolap Yapılandırması</h2>
 
         <?php if($mesaj): ?>
-            <div class="bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 p-3 rounded mb-6 border border-blue-200 dark:border-blue-800 transition-colors"><?= $mesaj ?></div>
+            <div class="<?= strpos($mesaj, '❌') !== false ? 'bg-red-100 text-red-800 border-red-200' : 'bg-blue-100 text-blue-800 border-blue-200' ?> dark:bg-opacity-20 p-3 rounded mb-6 border transition-colors"><?= $mesaj ?></div>
         <?php endif; ?>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
