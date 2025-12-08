@@ -7,6 +7,9 @@ $kategoriler = $pdo->query("SELECT * FROM categories ORDER BY name ASC")->fetchA
 $aktifSehirId = $_SESSION['aktif_sehir_id'] ?? '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
+    
     try {
         $id = uniqid('prod_');
         
@@ -52,6 +55,7 @@ require 'header.php';
     <?php endif; ?>
 
     <form method="POST" class="space-y-6">
+        <?php echo csrfAlaniniEkle(); ?>
         
         <div class="bg-slate-50 dark:bg-slate-700/30 p-4 rounded-lg border border-slate-200 dark:border-slate-600 transition-colors">
             <h3 class="font-bold text-blue-600 dark:text-blue-400 mb-3 flex items-center gap-2">📍 Konum Bilgisi</h3>
