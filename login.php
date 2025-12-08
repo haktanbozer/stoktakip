@@ -10,6 +10,9 @@ if (isset($_SESSION['user_id'])) {
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // KRİTİK GÜVENLİK İYİLEŞTİRMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
+    
     $username = $_POST['username'] ?? '';
     $password = $_POST['password'] ?? '';
 
@@ -100,6 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php endif; ?>
 
         <form method="POST" class="space-y-6">
+            <?php echo csrfAlaniniEkle(); ?>
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Kullanıcı Adı</label>
                 <input type="text" name="username" required class="w-full p-2.5 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white dark:bg-slate-700 text-slate-900 dark:text-white transition-colors">
