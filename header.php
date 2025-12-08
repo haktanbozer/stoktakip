@@ -4,7 +4,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// CSP Nonce kontrolü (db.php'den gelmeli, yoksa boş tanımla hata vermesin)
+// CSP Nonce Kontrolü (Güvenlik için db.php'den gelmeli)
 if (!isset($cspNonce)) {
     $cspNonce = ''; 
 }
@@ -105,10 +105,34 @@ if (!isset($cspNonce)) {
 
             <?php 
             try {
-                // Bildirim tablosu yoksa hata vermesin diye try-catch
+                // --- BİLDİRİM SORGUSU (ŞEHİR FİLTRELİ VE KONUM DETAYLI) ---
                 global $pdo; 
                 if($pdo) {
-                    $stmt = $pdo->query("SELECT * FROM notifications WHERE is_read = 0 ORDER BY days_remaining ASC LIMIT 10");
+                    // SELECT kısmına dolap, oda ve mekan isimlerini ekledik
+                    $sql = "SELECT n.*, 
+                                   p.name as urun_adi,
+                                   c.name as dolap_adi,
+                                   r.name as oda_adi,
+                                   l.name as mekan_adi
+                            FROM notifications n
+                            INNER JOIN products p ON n.product_id = p.id
+                            LEFT JOIN cabinets c ON p.cabinet_id = c.id
+                            LEFT JOIN rooms r ON c.room_id = r.id
+                            LEFT JOIN locations l ON r.location_id = l.id
+                            WHERE n.is_read = 0";
+                    
+                    $params = [];
+
+                    // Eğer aktif şehir varsa filtrele
+                    if (isset($_SESSION['aktif_sehir_id'])) {
+                        $sql .= " AND l.city_id = ?";
+                        $params[] = $_SESSION['aktif_sehir_id'];
+                    }
+
+                    $sql .= " ORDER BY n.days_remaining ASC LIMIT 10";
+
+                    $stmt = $pdo->prepare($sql);
+                    $stmt->execute($params);
                     $bildirimler = $stmt->fetchAll();
                     $bildirimSayisi = count($bildirimler);
                 } else { $bildirimSayisi = 0; $bildirimler = []; }
@@ -125,12 +149,21 @@ if (!isset($cspNonce)) {
                     <div class="bg-slate-50 dark:bg-slate-900 p-3 border-b dark:border-slate-700 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Bildirimler</div>
                     <div class="max-h-64 overflow-y-auto custom-scrollbar">
                         <?php if($bildirimSayisi == 0): ?>
-                            <div class="p-4 text-center text-slate-400 dark:text-slate-500 text-sm">Yeni bildirim yok 🎉</div>
+                            <div class="p-4 text-center text-slate-400 dark:text-slate-500 text-sm">Bu şehirde yeni bildirim yok 🎉</div>
                         <?php else: ?>
                             <?php foreach($bildirimler as $notif): ?>
                             <div class="p-3 border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition relative group/item text-slate-800 dark:text-slate-200">
-                                <p class="text-sm font-bold"><?= htmlspecialchars($notif['product_name']) ?></p>
+                                <p class="text-sm font-bold"><?= htmlspecialchars($notif['urun_adi']) ?></p>
+                                
+                                <p class="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 mb-1 flex items-center gap-1">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                                    <?= htmlspecialchars($notif['mekan_adi'] ?? '') ?> &rsaquo; 
+                                    <?= htmlspecialchars($notif['oda_adi'] ?? '') ?> &rsaquo; 
+                                    <?= htmlspecialchars($notif['dolap_adi'] ?? '') ?>
+                                </p>
+
                                 <p class="text-xs text-red-500 font-medium"><?= $notif['days_remaining'] ?> gün kaldı</p>
+                                
                                 <a href="bildirim-oku.php?id=<?= $notif['id'] ?>&token=<?= $_SESSION['csrf_token'] ?? '' ?>" class="absolute right-2 top-3 text-xs bg-slate-200 dark:bg-slate-600 hover:bg-blue-500 hover:text-white px-2 py-1 rounded opacity-0 group-hover/item:opacity-100 transition">✓</a>
                             </div>
                             <?php endforeach; ?>
