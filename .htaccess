@@ -1,5 +1,5 @@
 # ----------------------------------------------------------------------
-# 1. HTTPS YÖNLENDİRMESİ (EN ÜSTTE OLMALI - PUAN İÇİN KRİTİK)
+# 1. HTTPS YÖNLENDİRMESİ (EN ÜSTTE OLMALI)
 # ----------------------------------------------------------------------
 <IfModule mod_rewrite.c>
     RewriteEngine On
@@ -26,33 +26,14 @@ RewriteRule ^logs/ - [F,L]
 RewriteRule ^sessions/ - [F,L]
 
 # ----------------------------------------------------------------------
-# 3. HTTP GÜVENLİK BAŞLIKLARI (CSP GÜNCELLENDİ)
+# 3. HTTP BAŞLIKLARI (DİĞERLERİ PHP'DEN GÖNDERİLİYOR)
 # ----------------------------------------------------------------------
 
 <IfModule mod_headers.c>
-    # HSTS: Tarayıcıyı 1 yıl boyunca HTTPS kullanmaya zorla
-    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-
-    # MIME Sniffing Koruması
-    Header always set X-Content-Type-Options "nosniff"
-
-    # Clickjacking Koruması
-    Header always set X-Frame-Options "SAMEORIGIN"
-
-    # Referrer Policy
-    Header always set Referrer-Policy "strict-origin-when-cross-origin"
-
-    # --- CSP (Content Security Policy) - SIKILAŞTIRILMIŞ ---
-    # base-uri 'self': Base tag manipülasyonunu önler.
-    # object-src 'none': Flash vb. eklentileri tamamen kapatır.
-    # script-src: Sadece güvenli CDN'lere ve kendi sitenize izin verir.
+    # Not: CSP, HSTS, X-Frame-Options vb. güvenlik başlıkları 
+    # artık db.php üzerinden (Nonce desteği için) gönderilmektedir.
     
-    Header always set Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.datatables.net https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.datatables.net https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self' https://generativelanguage.googleapis.com; font-src 'self' https://cdnjs.cloudflare.com; frame-ancestors 'self';"
-
-    # Gereksiz İzinleri Kapat
-    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
-    
-    # Arama Motorlarını Engelle
+    # Arama Motorlarını Engelle (Tüm dosyalar için geçerli olsun)
     Header set X-Robots-Tag "noindex, nofollow"
 </IfModule>
 
