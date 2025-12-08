@@ -35,6 +35,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['user_id']
         ]);
 
+        // ** AUDIT LOG: YENİ ÜRÜN EKLENDİ **
+        // Dolap adını da loga eklemek için çekiyoruz
+        $stmtCab = $pdo->prepare("SELECT name FROM cabinets WHERE id = ?");
+        $stmtCab->execute([$_POST['cabinet_id']]);
+        $dolapAdi = $stmtCab->fetchColumn() ?? 'Bilinmeyen Dolap';
+
+        auditLog('EKLEME', "{$_POST['name']} ({$_POST['quantity']} {$_POST['unit']}) sisteme eklendi. Dolap: $dolapAdi");
+
         header("Location: envanter.php?durum=basarili");
         exit;
     } catch (PDOException $e) {
