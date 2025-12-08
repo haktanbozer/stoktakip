@@ -36,27 +36,38 @@ if (empty($error) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($user && password_verify($password, $user['password'])) {
         // --- BAŞARILI GİRİŞ ---
         
-        // 1. GÜVENLİK: Session ID'yi yenile (Session Fixation Koruması)
-        // Giriş başarılı olduğunda eski session ID'yi silip yenisini veriyoruz.
         session_regenerate_id(true);
-
-        // 2. Hata sayacını sıfırla
         $pdo->prepare("DELETE FROM login_attempts WHERE ip_address = ?")->execute([$ip_address]);
 
-        // 3. Oturumu Başlat
         $_SESSION['user_id'] = $user['id'];
         $_SESSION['username'] = $user['username'];
         $_SESSION['role'] = $user['role'];
         
-        // Audit Log
         if(function_exists('auditLog')) auditLog('LOGIN', "Kullanıcı giriş yaptı: {$user['username']}");
 
-        // 4. Beni Hatırla
+        // --- GÜVENLİ BENİ HATIRLA (TOKEN HASHLEME) ---
         if ($remember_me) {
+            // 1. Rastgele ve Güçlü Token Oluştur
             $token = bin2hex(random_bytes(32)); 
+            
+            // 2. Token'ı Hashle (Veritabanı güvenliği için)
+            $hashedToken = hash('sha256', $token);
+            
+            // 3. Son kullanma tarihi (30 gün)
             $expiry = time() + (30 * 24 * 60 * 60);
-            $stmt_update = $pdo->prepare("UPDATE users SET remember_token = ? WHERE id = ?");
-            $stmt_update->execute([$token, $user['id']]);
+            
+            // 4. Hashlenmiş tokenı veritabanına kaydet
+            // Not: users tablosunda 'token_expires' sütunu yoksa oluşturmanız gerekebilir.
+            // Eğer yoksa sadece remember_token güncellenir.
+            try {
+                $stmt_update = $pdo->prepare("UPDATE users SET remember_token = ? WHERE id = ?");
+                $stmt_update->execute([$hashedToken, $user['id']]);
+            } catch (Exception $e) {
+                // Sütun yoksa hata vermemesi için sessizce geçilebilir veya loglanabilir
+                sistemLogla("Token Kayıt Hatası: " . $e->getMessage(), 'WARNING');
+            }
+
+            // 5. Orijinal tokenı çereze yaz (HttpOnly ve Secure bayraklarıyla)
             $secure_cookie = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'; 
             setcookie('remember_user', $token, $expiry, '/', '', $secure_cookie, true);
         }
@@ -109,6 +120,11 @@ if (empty($error) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     <style> body { transition: background-color 0.3s, color 0.3s; } </style>
 </head>
 <body class="bg-slate-100 dark:bg-slate-900 flex items-center justify-center min-h-screen relative transition-colors">
+
+    <button id="theme-toggle" type="button" class="absolute top-4 right-4 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 rounded-lg text-sm p-2.5 transition">
+        <svg id="theme-toggle-light-icon" class="hidden w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
+        <svg id="theme-toggle-dark-icon" class="hidden w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path></svg>
+    </button>
 
     <div class="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-200 dark:border-slate-700 transition-colors">
         <div class="text-center mb-8">
