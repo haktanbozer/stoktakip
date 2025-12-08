@@ -3,17 +3,27 @@ require 'db.php';
 girisKontrol();
 
 // --- AYARLAR ---
-// GÜVENLİK GÜNCELLEMESİ: API Anahtarı artık .env dosyasından okunuyor
-$apiKey = getenv('GEMINI_API_KEY'); 
+// Güvenlik Uyarısı: Mümkünse API anahtarını .env dosyasından çekin
+$apiKey = 'api'; 
 $mesaj = '';
 $tarif = '';
 
-// ... (Kodun geri kalanı aynı şekilde devam eder) ...
-// YENİ EKLENEN: İzin verilen GIDA kategorileri listesi
-$izinVerilenGidaKategorileri = ['Gıda', 'Bakliyat', 'Süt Ürünleri', 'İçecek', 'Atıştırmalık', 'Baharat', 'Pirinç', 'Bulgur', 'Un', 'Makarna', 'Tatlı', 'Ayçiçek Yağı', 'Zeytinyağı', 'Sirke', 'Zeytin', 'Peynir', 'Şarküteri', 'Et', 'Balık', 'Tavuk', 'Dondurma', 'Sos', 'Tereyağı', 'Hazır Çorba', 'Kuruyemiş']; 
-$kategoriKosulu = "'" . implode("','", $izinVerilenGidaKategorileri) . "'"; 
+// İzin verilen GIDA kategorileri listesi
+$izinVerilenGidaKategorileri = [
+    'Gıda', 'Bakliyat', 'Süt Ürünleri', 'İçecek', 'Atıştırmalık', 'Baharat', 
+    'Pirinç', 'Bulgur', 'Un', 'Makarna', 'Tatlı', 'Ayçiçek Yağı', 'Zeytinyağı', 
+    'Sirke', 'Zeytin', 'Peynir', 'Şarküteri', 'Et', 'Balık', 'Tavuk', 'Dondurma', 
+    'Sos', 'Tereyağı', 'Hazır Çorba', 'Kuruyemiş'
+]; 
 
-// Malzemeleri Çek
+// GÜVENLİK GÜNCELLEMESİ (SQL Injection Koruması):
+// Eski yöntem (Güvensiz): $kategoriKosulu = "'" . implode("','", $izinVerilenGidaKategorileri) . "'";
+// Yeni yöntem (Güvenli): Soru işaretleri (?) oluşturup execute ile veriyi yolluyoruz.
+
+// Array eleman sayısı kadar virgülle ayrılmış soru işareti oluştur: ?,?,?,?
+$placeholders = implode(',', array_fill(0, count($izinVerilenGidaKategorileri), '?'));
+
+// Sorguyu Hazırla
 $sql = "SELECT 
             p.name, 
             p.quantity, 
@@ -23,19 +33,25 @@ $sql = "SELECT
             p.expiry_date
         FROM products p 
         WHERE p.quantity > 0 
-          AND p.category IN ($kategoriKosulu) 
+          AND p.category IN ($placeholders) 
+          /* SKT'si ya 14 gün içinde dolmuş/dolacak olanları al, ya da SKT'si NULL olanları al */
           AND (p.expiry_date <= DATE_ADD(CURRENT_DATE(), INTERVAL 14 DAY) OR p.expiry_date IS NULL)
         ORDER BY (p.expiry_date IS NULL), p.expiry_date ASC, p.name ASC 
         LIMIT 30";
 
-$urunler = $pdo->query($sql)->fetchAll(); 
+// Sorguyu Çalıştır (Parametreleri güvenli şekilde gönder)
+$stmt = $pdo->prepare($sql);
+$stmt->execute($izinVerilenGidaKategorileri);
+$urunler = $stmt->fetchAll(); 
 
-// ... (Geri kalan liste oluşturma ve API sorgusu kısımları aynı) ...
-// Malzeme Listesini Metne Çevir
+
+// Malzeme Listesini Metne Çevir (AI Prompt İçin)
 $malzemeListesi = [];
 $bugun = time();
 foreach ($urunler as $u) {
     $ekBilgi = "";
+    
+    // SKT Kontrolü
     if ($u['expiry_date']) {
         $skt = strtotime($u['expiry_date']);
         $kalanGun = ceil(($skt - $bugun) / (60 * 60 * 24));
@@ -45,21 +61,22 @@ foreach ($urunler as $u) {
             $ekBilgi = "({$kalanGun} GÜN KALDI)";
         }
     }
+
     $malzemeListesi[] = "{$u['name']} (Alt Kategori: {$u['sub_category']}) ({$u['quantity']} {$u['unit']}) {$ekBilgi}";
 }
 $malzemeMetni = implode('; ', $malzemeListesi);
 
-// YAPAY ZEKA SORGUSU
+// --- YAPAY ZEKA SORGUSU ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['oner'])) {
     
+    // CSRF token kontrolü
     csrfKontrol($_POST['csrf_token'] ?? '');
     
     if (empty($apiKey)) {
-        $mesaj = "⚠️ API anahtarı yapılandırılmamış (.env dosyası eksik veya boş).";
+        $mesaj = "⚠️ API anahtarı eksik.";
     } elseif (empty($malzemeMetni)) {
         $mesaj = "⚠️ Menü önerisi için stokta yeterli gıda malzemesi bulunmuyor.";
     } else {
-        // ... (Prompt ve cURL işlemleri aynı) ...
         $prompt = "Sen dünyaca ünlü, yaratıcı ve pratik bir Türk şefisin. Elimde şu malzemeler var: [$malzemeMetni]. 
         LÜTFEN ÖZELLİKLE '(ÇOK ACİL/GEÇMİŞ)' veya '(XX GÜN KALDI)' etiketi olan malzemeleri öncelikli olarak kullanmaya çalış. 
         Bu malzemelerin çoğunu (hepsini kullanmak zorunda değilsin) kullanarak yapabileceğim lezzetli bir yemek tarifi öner. 
@@ -83,6 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['oner'])) {
             ]
         ];
 
+        // cURL ile İstek At
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
         curl_setopt($ch, CURLOPT_POST, 1);
