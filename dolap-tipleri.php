@@ -11,6 +11,9 @@ $duzenlenecekTip = null;
 // --- İŞLEMLER ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
+    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
+    
     // Checkboxlardan gelen array'i string'e çevir (örn: "height,width,shelf_count")
     $fields = isset($_POST['fields']) ? implode(',', $_POST['fields']) : '';
 
@@ -98,6 +101,7 @@ require 'header.php';
                 </h3>
                 
                 <form method="POST" class="space-y-4">
+                    <?php echo csrfAlaniniEkle(); ?>
                     <?php if($duzenleModu): ?>
                         <input type="hidden" name="guncelle" value="1">
                     <?php else: ?>
@@ -171,6 +175,7 @@ require 'header.php';
                             ✏️ Düzenle
                         </a>
                         <form method="POST" onsubmit="return confirm('<?= htmlspecialchars($t['name']) ?> tipini silmek istediğinize emin misiniz?')" class="flex-1 sm:flex-none">
+                            <?php echo csrfAlaniniEkle(); ?>
                             <input type="hidden" name="sil" value="<?= $t['name'] ?>">
                             <button class="w-full bg-slate-50 hover:bg-red-50 dark:bg-slate-700 dark:hover:bg-red-900/30 text-red-500 dark:text-red-400 px-3 py-1.5 rounded text-sm font-medium transition border border-slate-200 dark:border-slate-600">
                                 ✕ Sil
