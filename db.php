@@ -29,18 +29,76 @@ function sistemLogla($mesaj, $seviye = 'ERROR') {
     $logDizini = __DIR__ . '/logs';
     if (!file_exists($logDizini)) {
         mkdir($logDizini, 0755, true);
+        // Güvenlik için log klasörüne dışarıdan erişimi engelleyen .htaccess
         file_put_contents($logDizini . '/.htaccess', 'Deny from all');
     }
+    // Günlük dosya adı (örn: app_2023-10-27.log)
     $logDosyasi = $logDizini . '/app_' . date('Y-m-d') . '.log';
+    
+    // Log formatı: [Tarih Saat] [Seviye] Mesaj
     $logIcerigi = sprintf("[%s] [%s] %s%s", date('Y-m-d H:i:s'), $seviye, $mesaj, PHP_EOL);
+    
+    // Dosyaya ekle (Append modu)
     error_log($logIcerigi, 3, $logDosyasi);
 }
 
-// --- AUDIT LOG MEKANİZMASI (Kullanıcı İşlemleri İçin - YENİ) ---
+// --- GLOBAL HATA YAKALAYICILAR (YENİ EKLENDİ) ---
+
+// 1. Uyarılar ve Noticeler için (Warning, Notice vb.)
+set_error_handler(function($errno, $errstr, $errfile, $errline) {
+    if (!(error_reporting() & $errno)) {
+        // Bu hata kodu error_reporting ayarına dahil değilse yoksay
+        return;
+    }
+    
+    $seviye = 'ERROR';
+    if ($errno === E_WARNING || $errno === E_USER_WARNING) $seviye = 'WARNING';
+    if ($errno === E_NOTICE || $errno === E_USER_NOTICE) $seviye = 'INFO';
+    
+    $mesaj = "$errstr | Dosya: $errfile | Satır: $errline";
+    sistemLogla($mesaj, $seviye);
+    
+    // false döndürerek PHP'nin standart işlemesine izin ver (Geliştirme aşamasında ekranda da görünsün)
+    // Canlı ortamda true döndürüp ekrana basılması engellenebilir.
+    return false; 
+});
+
+// 2. Yakalanmamış İstisnalar için (Uncaught Exceptions)
+set_exception_handler(function($e) {
+    $mesaj = "Yakalanmamış İstisna: " . $e->getMessage() . " | Dosya: " . $e->getFile() . " | Satır: " . $e->getLine();
+    sistemLogla($mesaj, 'CRITICAL');
+    
+    // Kullanıcıya şık bir hata sayfası göster
+    if (!headers_sent()) {
+         // error.php varsa oraya yönlendir
+         if(file_exists('error.php')) {
+             header("Location: error.php");
+             exit;
+         }
+    }
+    // error.php yoksa veya header gönderildiyse basit mesaj
+    echo "Sistemde teknik bir sorun oluştu. Lütfen yöneticinize başvurun.";
+});
+
+// 3. Kritik Hatalar (Fatal Errors) için Kapanış Fonksiyonu
+register_shutdown_function(function() {
+    $error = error_get_last();
+    if ($error !== NULL && in_array($error['type'], [E_ERROR, E_CORE_ERROR, E_COMPILE_ERROR, E_RECOVERABLE_ERROR])) {
+         $mesaj = "Kritik Hata (Fatal): " . $error['message'] . " | Dosya: " . $error['file'] . " | Satır: " . $error['line'];
+         sistemLogla($mesaj, 'FATAL');
+         
+         if (!headers_sent() && file_exists('error.php')) {
+             header("Location: error.php");
+         }
+    }
+});
+
+
+// --- AUDIT LOG MEKANİZMASI ---
 function auditLog($islem, $detay) {
     global $pdo;
     
-    // Kullanıcı giriş yapmamışsa loglama yapma (Login denemeleri hariç)
+    // Kullanıcı giriş yapmamışsa loglama yapma
     if (!isset($_SESSION['user_id'])) return;
 
     try {
@@ -48,12 +106,11 @@ function auditLog($islem, $detay) {
         $stmt->execute([
             $_SESSION['user_id'],
             $_SESSION['username'] ?? 'Bilinmiyor',
-            $islem, // Örn: 'SİLME', 'GÜNCELLEME'
-            $detay, // Örn: 'X ürünü silindi.'
+            $islem, 
+            $detay, 
             $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'
         ]);
     } catch (Exception $e) {
-        // Audit log hatası sistemi durdurmasın, arka plan loguna yazsın
         sistemLogla("Audit Log Yazma Hatası: " . $e->getMessage(), 'WARNING');
     }
 }
@@ -102,8 +159,8 @@ function girisKontrol() {
 
         if ($userExists == 0) {
             // Kullanıcı veritabanından silinmiş!
-            session_destroy(); // Oturumu öldür
-            header("Location: login.php?msg=deleted"); // Logine at
+            session_destroy(); 
+            header("Location: login.php?msg=deleted"); 
             exit;
         }
     } catch (PDOException $e) {
