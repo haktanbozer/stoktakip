@@ -19,6 +19,24 @@ $izinVerilenGidaKategorileri = [
 // SQL Injection Koruması: Placeholder kullanımı
 $placeholders = implode(',', array_fill(0, count($izinVerilenGidaKategorileri), '?'));
 
+// --- SORGULARI HAZIRLA (ŞEHİR FİLTRELİ) ---
+// Ürünlerin şehir bilgisini alabilmek için JOIN yapıyoruz
+$joinSQL = "JOIN cabinets c ON p.cabinet_id = c.id 
+            JOIN rooms r ON c.room_id = r.id 
+            JOIN locations l ON r.location_id = l.id";
+
+$whereSQL = "WHERE p.quantity > 0 
+             AND p.category IN ($placeholders) 
+             AND (p.expiry_date <= DATE_ADD(CURRENT_DATE(), INTERVAL 14 DAY) OR p.expiry_date IS NULL)";
+
+$params = $izinVerilenGidaKategorileri; // İlk parametreler kategoriler
+
+// Şehir Filtresi Ekle
+if (isset($_SESSION['aktif_sehir_id'])) {
+    $whereSQL .= " AND l.city_id = ?";
+    $params[] = $_SESSION['aktif_sehir_id']; // Şehir ID'sini parametrelere ekle
+}
+
 // Malzemeleri Çek
 $sql = "SELECT 
             p.name, 
@@ -28,14 +46,13 @@ $sql = "SELECT
             p.sub_category,
             p.expiry_date
         FROM products p 
-        WHERE p.quantity > 0 
-          AND p.category IN ($placeholders) 
-          AND (p.expiry_date <= DATE_ADD(CURRENT_DATE(), INTERVAL 14 DAY) OR p.expiry_date IS NULL)
+        $joinSQL
+        $whereSQL
         ORDER BY (p.expiry_date IS NULL), p.expiry_date ASC, p.name ASC 
         LIMIT 30";
 
 $stmt = $pdo->prepare($sql);
-$stmt->execute($izinVerilenGidaKategorileri);
+$stmt->execute($params);
 $urunler = $stmt->fetchAll(); 
 
 // Malzeme Listesini Metne Çevir
@@ -65,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['oner'])) {
     if (empty($apiKey)) {
         $mesaj = "⚠️ API anahtarı eksik (.env kontrol edin).";
     } elseif (empty($malzemeMetni)) {
-        $mesaj = "⚠️ Menü önerisi için stokta yeterli gıda malzemesi bulunmuyor.";
+        $mesaj = "⚠️ Menü önerisi için bu şehirde/konumda yeterli gıda malzemesi bulunmuyor.";
     } else {
         $prompt = "Sen dünyaca ünlü, yaratıcı ve pratik bir Türk şefisin. Elimde şu malzemeler var: [$malzemeMetni]. 
         LÜTFEN ÖZELLİKLE '(ÇOK ACİL/GEÇMİŞ)' veya '(XX GÜN KALDI)' etiketi olan malzemeleri öncelikli olarak kullanmaya çalış. 
@@ -108,26 +125,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['oner'])) {
             if (isset($result['candidates'][0]['content']['parts'][0]['text'])) {
                 $hamMetin = $result['candidates'][0]['content']['parts'][0]['text'];
                 
-                // --- XSS KORUMASI VE FORMATLAMA (GÜVENLİ YÖNTEM) ---
-                
-                // 1. Tüm HTML etiketlerini temizle (En güvenli adım)
+                // --- XSS KORUMASI VE FORMATLAMA ---
                 $guvenliMetin = htmlspecialchars($hamMetin, ENT_QUOTES, 'UTF-8');
-                
-                // 2. Markdown işaretlerini kontrollü olarak HTML'e çevir
-                
-                // Başlıkları (## Başlık) -> <h3> etiketi
                 $guvenliMetin = preg_replace('/^## (.*?)$/m', '<h3 class="text-xl font-bold text-slate-800 dark:text-white mt-4 mb-2 border-b border-orange-200 pb-1">$1</h3>', $guvenliMetin);
-                
-                // Kalın yazıları (**yazı**) -> <strong> etiketi
                 $guvenliMetin = preg_replace('/\*\*(.*?)\*\*/', '<strong class="text-purple-700 dark:text-purple-400 font-bold">$1</strong>', $guvenliMetin);
-                
-                // İtalik yazıları (*yazı*) -> <em> etiketi
                 $guvenliMetin = preg_replace('/\*(.*?)\*/', '<em class="text-slate-600 dark:text-slate-400">$1</em>', $guvenliMetin);
-
-                // Listeleri (- Madde) -> Listeye benzer yapı
                 $guvenliMetin = preg_replace('/^(\*|\-) (.*?)$/m', '<li class="ml-4 list-disc marker:text-orange-500">$2</li>', $guvenliMetin);
-
-                // 3. Satır sonlarını <br> yap ve listeleri <ul> içine al (Basit çözüm)
                 $tarif = nl2br($guvenliMetin);
                 
             } else {
@@ -153,7 +156,13 @@ require 'header.php';
                     👨‍🍳 Yapay Zeka Şef
                     <span class="bg-gradient-to-r from-blue-500 to-purple-600 text-white text-xs px-2 py-1 rounded-full">AI Powered</span>
                 </h2>
-                <p class="text-sm text-slate-500 dark:text-slate-400">Stoklarınızdaki **gıda ürünlerine** göre akıllı yemek önerileri.</p>
+                <p class="text-sm text-slate-500 dark:text-slate-400">
+                    <?php if(isset($_SESSION['aktif_sehir_ad'])): ?>
+                        <b><?= htmlspecialchars($_SESSION['aktif_sehir_ad']) ?></b> içindeki stoklara göre öneriler.
+                    <?php else: ?>
+                        Tüm şehirlerdeki stoklara göre öneriler.
+                    <?php endif; ?>
+                </p>
             </div>
         </div>
 
@@ -164,7 +173,7 @@ require 'header.php';
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             
             <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow border border-slate-200 dark:border-slate-700 h-fit transition-colors">
-                <h3 class="font-bold text-slate-700 dark:text-white mb-4 border-b dark:border-slate-700 pb-2">📦 Mevcut Gıda Malzemelerim</h3>
+                <h3 class="font-bold text-slate-700 dark:text-white mb-4 border-b dark:border-slate-700 pb-2">📦 Kullanılacak Malzemeler</h3>
                 <div class="text-sm text-slate-600 dark:text-slate-300 space-y-1 mb-6 max-h-60 overflow-y-auto custom-scrollbar">
                     <?php foreach($urunler as $u): ?>
                         <div class="flex justify-between">
@@ -186,7 +195,7 @@ require 'header.php';
                         </div>
                         <div class="text-[10px] text-slate-400 dark:text-slate-500 ml-2">Alt Kategori: <?= htmlspecialchars($u['sub_category']) ?></div>
                     <?php endforeach; ?>
-                    <?php if(empty($urunler)) echo "<p class='text-slate-400 dark:text-slate-500'>Stokta gıda ürünü yok.</p>"; ?>
+                    <?php if(empty($urunler)) echo "<p class='text-slate-400 dark:text-slate-500'>Bu şehirde uygun gıda ürünü yok.</p>"; ?>
                 </div>
                 
                 <form method="POST">
