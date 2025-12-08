@@ -2,69 +2,91 @@
 require 'db.php';
 girisKontrol();
 
-// --- ŞEHİR FİLTRESİ HAZIRLIĞI ---
-$joinSQL = "";
-$whereSQL = "";
+// --- VERİ HAZIRLIĞI (RAPORLAMA İÇİN ORTAK MANTIK) ---
+$joinSQL = "LEFT JOIN cabinets c ON p.cabinet_id = c.id 
+            LEFT JOIN rooms r ON c.room_id = r.id 
+            LEFT JOIN locations l ON r.location_id = l.id";
+$whereSQL = "WHERE 1=1";
 $params = [];
 
-// PDF Raporu için ham veri sorgusu
-$pdfJoinSQL = "JOIN cabinets c ON p.cabinet_id = c.id 
-               JOIN rooms r ON c.room_id = r.id 
-               JOIN locations l ON r.location_id = l.id";
-$pdfWhereSQL = "1=1";
-$pdfParams = [];
-
+// Şehir Filtresi
 if (isset($_SESSION['aktif_sehir_id'])) {
-    $joinSQL = "JOIN cabinets c ON p.cabinet_id = c.id 
-                JOIN rooms r ON c.room_id = r.id 
-                JOIN locations l ON r.location_id = l.id";
-    $whereSQL = "AND l.city_id = ?";
+    $whereSQL .= " AND l.city_id = ?";
     $params[] = $_SESSION['aktif_sehir_id'];
-
-    $pdfWhereSQL .= " AND l.city_id = ?";
-    $pdfParams[] = $_SESSION['aktif_sehir_id'];
 }
 
-// 1. TEMEL İSTATİSTİKLER
-$toplamUrun = $pdo->prepare("SELECT count(*) FROM products p $joinSQL WHERE 1=1 $whereSQL");
-$toplamUrun->execute($params);
-$toplamUrun = $toplamUrun->fetchColumn();
+// 1. TÜM ÜRÜNLERİ ÇEK (Tek sorgu ile hem ekrana hem PDF raporuna veri sağlayalım)
+// Bu sorgu rapor.php ile aynı mantıkta çalışır.
+$sql = "SELECT p.*, l.name as loc_name, r.name as room_name, c.name as cab_name 
+        FROM products p $joinSQL $whereSQL 
+        ORDER BY (p.expiry_date IS NULL), p.expiry_date ASC";
 
-// Kritik ürün (Sadece tarihi olanlar)
-$kritikUrun = $pdo->prepare("SELECT count(*) FROM products p $joinSQL WHERE p.expiry_date IS NOT NULL AND p.expiry_date <= DATE_ADD(CURRENT_DATE, INTERVAL 90 DAY) $whereSQL");
-$kritikUrun->execute($params);
-$kritikUrun = $kritikUrun->fetchColumn();
-
-// 2. GRAFİK VERİLERİ
-$stmt = $pdo->prepare("SELECT category, count(*) as sayi FROM products p $joinSQL WHERE 1=1 $whereSQL GROUP BY category");
+$stmt = $pdo->prepare($sql);
 $stmt->execute($params);
-$kategoriVerileri = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+$tumUrunler = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$stmt = $pdo->prepare("SELECT purchase_date FROM products p $joinSQL WHERE 1=1 $whereSQL");
-$stmt->execute($params);
-$alimTarihleri = $stmt->fetchAll(PDO::FETCH_COLUMN);
-
-$yasGruplari = ['0-30 Gün' => 0, '1-3 Ay' => 0, '3-6 Ay' => 0, '> 6 Ay' => 0];
+// 2. İSTATİSTİKLERİ HESAPLA (Dashboard ve Rapor İçin)
+$toplamUrun = count($tumUrunler);
 $bugun = time();
-foreach($alimTarihleri as $tarih) {
-    if(!$tarih) continue;
-    $gecenGun = ceil(abs($bugun - strtotime($tarih)) / (60 * 60 * 24));
-    if ($gecenGun <= 30) $yasGruplari['0-30 Gün']++;
-    elseif ($gecenGun <= 90) $yasGruplari['1-3 Ay']++;
-    elseif ($gecenGun <= 180) $yasGruplari['3-6 Ay']++;
-    else $yasGruplari['> 6 Ay']++;
+$riskStats = ['expired' => 0, 'critical' => 0, 'warning' => 0, 'safe' => 0];
+$catStats = [];
+$yasGruplari = ['0-30 Gün' => 0, '1-3 Ay' => 0, '3-6 Ay' => 0, '> 6 Ay' => 0];
+
+$kritikUrunSayisi = 0; // Dashboard kartı için (3 ay altı genel risk)
+$yaklasanlar = []; // Dashboard listesi için (İlk 10)
+
+foreach ($tumUrunler as $urun) {
+    // A. Risk Analizi
+    if (empty($urun['expiry_date'])) {
+        $riskStats['safe']++;
+    } else {
+        $skt = strtotime($urun['expiry_date']);
+        $kalanGun = ceil(($skt - $bugun) / (60 * 60 * 24));
+        
+        if ($kalanGun < 0) $riskStats['expired']++;
+        elseif ($kalanGun <= 7) $riskStats['critical']++;
+        elseif ($kalanGun <= 30) $riskStats['warning']++;
+        else $riskStats['safe']++;
+
+        // Dashboard için "Kritik" tanımı (Örn: 90 gün altı)
+        if ($kalanGun <= 90) {
+            $kritikUrunSayisi++;
+            // Yaklaşanlar listesine ekle (Sadece riskli olanlar)
+            if (count($yaklasanlar) < 10) {
+                $yaklasanlar[] = $urun;
+            }
+        }
+    }
+
+    // B. Kategori Analizi
+    $cat = $urun['category'] ?? 'Diğer';
+    if (!isset($catStats[$cat])) $catStats[$cat] = 0;
+    $catStats[$cat]++;
+
+    // C. Stok Yaşı
+    if ($urun['purchase_date']) {
+        $alim = strtotime($urun['purchase_date']);
+        $gecenGun = ceil(abs($bugun - $alim) / (60 * 60 * 24));
+        if ($gecenGun <= 30) $yasGruplari['0-30 Gün']++;
+        elseif ($gecenGun <= 90) $yasGruplari['1-3 Ay']++;
+        elseif ($gecenGun <= 180) $yasGruplari['3-6 Ay']++;
+        else $yasGruplari['> 6 Ay']++;
+    }
 }
 
-// 3. ODA VE DOLAP VERİLERİ
+// 3. ODA VE DOLAP VERİLERİ (Grafikler İçin - Ayrı Sorgu Gerekli)
+// Şehir filtresi varsa onu kullanalım
+$filterPart = isset($_SESSION['aktif_sehir_id']) ? "AND l.city_id = ?" : "";
+$filterParams = isset($_SESSION['aktif_sehir_id']) ? [$_SESSION['aktif_sehir_id']] : [];
+
 $odaSQL = "SELECT r.name as oda_adi, count(c.id) as dolap_sayisi 
            FROM rooms r 
            JOIN locations l ON r.location_id = l.id 
            LEFT JOIN cabinets c ON c.room_id = r.id 
-           WHERE 1=1 " . (isset($_SESSION['aktif_sehir_id']) ? "AND l.city_id = ?" : "") . "
+           WHERE 1=1 $filterPart
            GROUP BY r.id ORDER BY dolap_sayisi DESC";
 $stmt = $pdo->prepare($odaSQL);
-if(isset($_SESSION['aktif_sehir_id'])) $stmt->execute([$_SESSION['aktif_sehir_id']]);
-else $stmt->execute();
+$stmt->execute($filterParams);
 $odaVerileri = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
 
 $dolapSQL = "SELECT c.name as dolap_adi, count(p.id) as urun_sayisi 
@@ -72,23 +94,11 @@ $dolapSQL = "SELECT c.name as dolap_adi, count(p.id) as urun_sayisi
              JOIN rooms r ON c.room_id = r.id
              JOIN locations l ON r.location_id = l.id
              LEFT JOIN products p ON p.cabinet_id = c.id
-             WHERE 1=1 " . (isset($_SESSION['aktif_sehir_id']) ? "AND l.city_id = ?" : "") . "
+             WHERE 1=1 $filterPart
              GROUP BY c.id ORDER BY urun_sayisi DESC LIMIT 10";
 $stmt = $pdo->prepare($dolapSQL);
-if(isset($_SESSION['aktif_sehir_id'])) $stmt->execute([$_SESSION['aktif_sehir_id']]);
-else $stmt->execute();
+$stmt->execute($filterParams);
 $dolapVerileri = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
-
-// 4. PDF VERİSİ
-// Order by expiry_date ASC, NULLs last
-$stmt = $pdo->prepare("SELECT p.* FROM products p $pdfJoinSQL WHERE $pdfWhereSQL ORDER BY (p.expiry_date IS NULL), p.expiry_date ASC");
-$stmt->execute($pdfParams);
-$tumUrunlerPDF = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// 5. YAKLAŞANLAR (Sadece tarihi olanlar)
-$stmt = $pdo->prepare("SELECT p.* FROM products p $joinSQL WHERE p.expiry_date IS NOT NULL AND p.expiry_date <= DATE_ADD(CURRENT_DATE, INTERVAL 90 DAY) $whereSQL ORDER BY p.expiry_date ASC LIMIT 10");
-$stmt->execute($params);
-$yaklasanlar = $stmt->fetchAll();
 
 require 'header.php';
 ?>
@@ -120,7 +130,7 @@ require 'header.php';
         </div>
         <div>
             <p class="text-sm text-slate-500 dark:text-slate-400">Kritik (3 Ay Altı)</p>
-            <h3 class="text-2xl font-bold text-slate-800 dark:text-white"><?= $kritikUrun ?></h3>
+            <h3 class="text-2xl font-bold text-slate-800 dark:text-white"><?= $kritikUrunSayisi ?></h3>
         </div>
     </div>
     
@@ -163,7 +173,7 @@ require 'header.php';
 
 <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors">
     <div class="p-4 border-b border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/50">
-        <h3 class="font-semibold text-slate-700 dark:text-slate-200">Son Kullanma Tarihi Yaklaşanlar</h3>
+        <h3 class="font-semibold text-slate-700 dark:text-slate-200">Son Kullanma Tarihi Yaklaşanlar (İlk 10)</h3>
     </div>
     <div class="overflow-x-auto">
         <table class="w-full text-sm text-left text-slate-600 dark:text-slate-300">
@@ -177,20 +187,15 @@ require 'header.php';
             </thead>
             <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
                 <?php if (empty($yaklasanlar)): ?>
-                    <tr><td colspan="4" class="px-6 py-4 text-center text-slate-400">Riskli ürün yok.</td></tr>
+                    <tr><td colspan="4" class="px-6 py-4 text-center text-slate-400">Riskli (3 aydan az kalan) ürün yok.</td></tr>
                 <?php else: ?>
                     <?php foreach($yaklasanlar as $urun): 
-                        if (!empty($urun['expiry_date'])) {
-                            $kalanGun = ceil((strtotime($urun['expiry_date']) - time()) / (60 * 60 * 24));
-                            $renk = $kalanGun < 7 ? 'text-red-600 dark:text-red-400 font-bold' : 'text-orange-500 dark:text-orange-400';
-                            $tarihGoster = date('d.m.Y', strtotime($urun['expiry_date']));
-                            $durumGoster = $kalanGun . ' Gün';
-                        } else {
-                            $kalanGun = 9999;
-                            $renk = 'text-slate-500 dark:text-slate-400';
-                            $tarihGoster = '-';
-                            $durumGoster = 'Süresiz';
-                        }
+                        if (empty($urun['expiry_date'])) continue;
+
+                        $kalanGun = ceil((strtotime($urun['expiry_date']) - time()) / (60 * 60 * 24));
+                        $renk = $kalanGun < 7 ? 'text-red-600 dark:text-red-400 font-bold' : 'text-orange-500 dark:text-orange-400';
+                        $tarihGoster = date('d.m.Y', strtotime($urun['expiry_date']));
+                        $durumGoster = $kalanGun < 0 ? 'Süresi Geçmiş' : $kalanGun . ' Gün Kaldı';
                     ?>
                     <tr class="border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                         <td class="px-6 py-4 font-medium text-slate-800 dark:text-slate-200">
@@ -213,13 +218,21 @@ require 'header.php';
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
 
 <script>
-const catData = <?= json_encode($kategoriVerileri) ?>;
+const catData = <?= json_encode($catStats) ?>;
 const ageData = <?= json_encode($yasGruplari) ?>;
 const odaData = <?= json_encode($odaVerileri) ?>;
 const dolapData = <?= json_encode($dolapVerileri) ?>;
-const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6'];
 
-// Chart.js Default Font Color for Dark Mode
+// PDF Verileri (PHP'den Gelen Tam Liste)
+const pdfData = <?= json_encode($tumUrunler) ?>;
+
+// PDF İstatistikleri
+const stats = {
+    total: <?= $toplamUrun ?>,
+    risk: <?= json_encode($riskStats) ?>
+};
+
+const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6'];
 Chart.defaults.color = document.documentElement.classList.contains('dark') ? '#94a3b8' : '#64748b';
 
 new Chart(document.getElementById('catChart').getContext('2d'), {
@@ -246,42 +259,94 @@ new Chart(document.getElementById('dolapChart').getContext('2d'), {
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
 });
 
-function tr(str) { if(!str) return ""; return str.replace(/Ğ/g, "G").replace(/ğ/g, "g").replace(/Ü/g, "U").replace(/ü/g, "u").replace(/Ş/g, "S").replace(/ş/g, "s").replace(/İ/g, "I").replace(/ı/g, "i").replace(/Ö/g, "O").replace(/ö/g, "o").replace(/Ç/g, "C").replace(/ç/g, "c"); }
-const pdfData = <?= json_encode($tumUrunlerPDF) ?>;
+// Gelişmiş PDF Oluşturucu (rapor.php ile aynı kalite)
+function tr(str) {
+    if(!str) return "";
+    str = String(str);
+    str = str.replace(/ç/g, "c").replace(/ğ/g, "g").replace(/ı/g, "i").replace(/ö/g, "o").replace(/ş/g, "s").replace(/ü/g, "u");
+    str = str.replace(/Ç/g, "C").replace(/Ğ/g, "G").replace(/İ/g, "I").replace(/Ö/g, "O").replace(/Ş/g, "S").replace(/Ü/g, "U");
+    return str.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
+}
 
 function generatePDF() {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
     const today = new Date().toLocaleDateString('tr-TR');
+    const locationName = "<?= $_SESSION['aktif_sehir_ad'] ?? 'Tüm Lokasyonlar' ?>";
 
-    doc.setFontSize(20); doc.setTextColor(41, 128, 185);
-    doc.text("StokTakip - Envanter Raporu", 14, 20);
+    doc.setFontSize(20); 
+    doc.setTextColor(41, 128, 185);
+    doc.text(tr("StokTakip - Genel Rapor"), 14, 20);
     
-    doc.setFontSize(10); doc.setTextColor(100);
-    doc.text("Tarih: " + today, 14, 28);
-    doc.text("Lokasyon: <?= htmlspecialchars($_SESSION['aktif_sehir_ad'] ?? 'Tum Sehirler') ?>", 14, 33);
+    doc.setFontSize(10); 
+    doc.setTextColor(100);
+    doc.text(tr("Tarih: ") + today, 14, 28);
+    doc.text(tr("Lokasyon: ") + tr(locationName), 14, 33);
+    doc.text(tr("Toplam Ürün: ") + stats.total, 14, 38);
 
-    const rows = pdfData.map(p => {
+    let yPos = 50;
+
+    // 1. RİSK ANALİZİ GRAFİĞİ
+    doc.setFontSize(14); 
+    doc.setTextColor(0);
+    doc.text(tr("1. Risk Analizi"), 14, yPos);
+    yPos += 8;
+
+    if(stats.total > 0) {
+        const barW = 180;
+        const expiredW = (stats.risk.expired / stats.total) * barW;
+        const criticalW = (stats.risk.critical / stats.total) * barW;
+        const warningW = (stats.risk.warning / stats.total) * barW;
+        const safeW = (stats.risk.safe / stats.total) * barW;
+
+        let currentX = 14;
+        const barH = 5;
+
+        if(expiredW > 0) { doc.setFillColor(239, 68, 68); doc.rect(currentX, yPos, expiredW, barH, 'F'); currentX += expiredW; }
+        if(criticalW > 0) { doc.setFillColor(249, 115, 22); doc.rect(currentX, yPos, criticalW, barH, 'F'); currentX += criticalW; }
+        if(warningW > 0) { doc.setFillColor(250, 204, 21); doc.rect(currentX, yPos, warningW, barH, 'F'); currentX += warningW; }
+        if(safeW > 0) { doc.setFillColor(34, 197, 94); doc.rect(currentX, yPos, safeW, barH, 'F'); }
+    }
+    
+    yPos += 10;
+    doc.setFontSize(9);
+    doc.setTextColor(80);
+    doc.text(tr(`Geçmiş: ${stats.risk.expired} | Kritik: ${stats.risk.critical} | Yaklaşan: ${stats.risk.warning} | Güvenli: ${stats.risk.safe}`), 14, yPos);
+
+    // 2. ÜRÜN LİSTESİ
+    let finalY = yPos + 15;
+    doc.setFontSize(14); 
+    doc.setTextColor(0);
+    doc.text(tr("2. Ürün Listesi"), 14, finalY);
+
+    const productRows = pdfData.map(p => {
         let sktStr = "-";
-        let kalanStr = "Suresiz";
+        let kalanStr = tr("Süresiz");
 
         if (p.expiry_date) {
             const skt = new Date(p.expiry_date);
             const bugun = new Date();
             const fark = Math.ceil((skt - bugun) / (1000 * 60 * 60 * 24));
-            sktStr = p.expiry_date; 
-            kalanStr = fark + ' Gun';
+            
+            const gun = String(skt.getDate()).padStart(2, '0');
+            const ay = String(skt.getMonth() + 1).padStart(2, '0');
+            const yil = skt.getFullYear();
+            sktStr = `${gun}.${ay}.${yil}`;
+            
+            kalanStr = fark + tr(" Gün");
+            if(fark < 0) kalanStr = tr("GEÇMİŞ");
         }
 
-        return [tr(p.name), tr(p.brand), tr(p.category), p.quantity + ' ' + p.unit, sktStr, kalanStr];
+        return [tr(p.name), tr(p.brand), tr(p.category), p.quantity + ' ' + tr(p.unit), sktStr, kalanStr];
     });
 
     doc.autoTable({
-        startY: 40,
-        head: [['Urun', 'Marka', 'Kategori', 'Miktar', 'SKT', 'Kalan']],
-        body: rows,
-        theme: 'striped',
-        headStyles: { fillColor: [44, 62, 80] }
+        startY: finalY + 5,
+        head: [[tr('Ürün'), tr('Marka'), tr('Kategori'), tr('Miktar'), tr('SKT'), tr('Durum')]],
+        body: productRows,
+        headStyles: { fillColor: [41, 128, 185], font: 'helvetica' },
+        alternateRowStyles: { fillColor: [245, 245, 245] },
+        styles: { fontSize: 8, font: 'helvetica' }
     });
 
     doc.save(`StokTakip_Rapor_${new Date().toISOString().slice(0,10)}.pdf`);
