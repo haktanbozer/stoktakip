@@ -523,7 +523,9 @@ async function submitTransfer() {
     const amount = parseFloat(document.getElementById('transferAmount').value);
     const max_qty = parseFloat(document.getElementById('transferAmount').max);
     const new_cab_id = document.getElementById('targetCabinet').value;
-    const current_cab_id = document.getElementById('targetCabinet').options.find(opt => opt.defaultSelected)?.value || null;
+    
+    // YENİLEME: Client-side kontrol atlandığı için buradaki mevcut dolap ID'si okuma kaldırıldı.
+    // Server tarafı (ajax.php) ürüne ait mevcut dolap ID'sini güvenilir bir şekilde veritabanından çeker.
     
     if (amount <= 0 || amount > max_qty || isNaN(amount)) {
         alert(`Lütfen ${max_qty} değerini aşmayan geçerli bir miktar girin.`);
@@ -535,16 +537,15 @@ async function submitTransfer() {
         return;
     }
 
-    if (new_cab_id === current_cab_id && amount > 0) {
-        alert("Lütfen farklı bir hedef dolap seçin veya transfer miktarını 0 olarak bırakın.");
-        return;
-    }
+    // KRİTİK GÜVENLİK DÜZELTMESİ: İstemci tarafındaki (client-side) güvenlik kontrolü KALDIRILDI.
+    // Bu kontrol, kolayca atlatılabildiği için artık sunucu tarafına devredilmiştir (ajax.php).
     
     const submitBtn = document.querySelector('#transferForm button[type="submit"]');
     submitBtn.disabled = true;
     submitBtn.innerText = 'İşleniyor...';
 
     // AJAX isteğine CSRF token'ı eklenir (URL Parametresi olarak)
+    // Server'ın (ajax.php) kontrol etmesi için sadece product_id ve new_cab_id gönderilir.
     const res = await fetch(`ajax.php?islem=hizli_transfer&id=${product_id}&amount=${amount}&new_cab_id=${new_cab_id}&csrf_token=${CSRF_TOKEN}`);
     
     try {
@@ -554,6 +555,7 @@ async function submitTransfer() {
             alert(`✅ Başarılı: ${data.amount} ${data.unit} ürünü, ${data.new_cab_name} konumuna taşındı!`);
             window.location.reload(); 
         } else {
+            // Sunucudan gelen hata mesajı (Hedef dolap aynı olamaz uyarısı dahil) gösterilir.
             alert(`❌ Transfer Hatası: ${data.error || 'Bilinmeyen Hata'}`);
         }
     } catch(e) {
