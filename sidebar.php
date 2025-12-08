@@ -66,6 +66,7 @@ function menuLink($url, $icon, $text, $currentPage) {
             menuLink("dolap-tipleri.php", "⚙️", "Dolap Tipleri", $current_page);
             menuLink("bildirim-ayarlari.php", "🔔", "Bildirim Ayarları", $current_page);
             menuLink("bildirim-gecmisi.php", "📨", "Bildirim Logları", $current_page);
+            menuLink("islem-gecmisi.php", "📋", "İşlem Geçmişi", $current_page);
             menuLink("rapor.php", "📄", "Raporlar", $current_page);
             
             // Ayırıcı Çizgi
