@@ -28,10 +28,15 @@ foreach ($urunler as $urun) {
     if (in_array($kalanGun, $bildirimGunleri)) {
         $mailVarMi = true;
         $kritikUrunSayisi++;
+        
+        // GÜVENLİK DÜZELTMESİ: XSS riskini önlemek için htmlspecialchars() kullanıldı
+        $urunAdiGvnli = htmlspecialchars($urun['name']);
+        $markaGvnli = htmlspecialchars($urun['brand']);
+        
         $gonderilecekMailIcerigi .= "
         <tr>
-            <td style='padding:5px; border-bottom:1px solid #ddd;'><b>{$urun['name']}</b></td>
-            <td style='padding:5px; border-bottom:1px solid #ddd;'>{$urun['brand']}</td>
+            <td style='padding:5px; border-bottom:1px solid #ddd;'><b>{$urunAdiGvnli}</b></td>
+            <td style='padding:5px; border-bottom:1px solid #ddd;'>{$markaGvnli}</td>
             <td style='padding:5px; border-bottom:1px solid #ddd; color:red;'><b>{$kalanGun} Gün</b></td>
         </tr>";
     }
