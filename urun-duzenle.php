@@ -30,6 +30,9 @@ if ($urun['category']) { $stmt = $pdo->prepare("SELECT sub_categories FROM categ
 
 // Kaydetme
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
+    
     try {
         $expiryDate = (!empty($_POST['expiry_date'])) ? $_POST['expiry_date'] : null;
         
@@ -60,6 +63,7 @@ require 'header.php';
     <?php endif; ?>
 
     <form method="POST" class="space-y-6">
+        <?php echo csrfAlaniniEkle(); ?>
         <div class="bg-slate-50 dark:bg-slate-700/30 p-4 rounded-lg border border-slate-200 dark:border-slate-600">
             <h3 class="font-bold text-blue-600 dark:text-blue-400 mb-3">📍 Konum</h3>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
