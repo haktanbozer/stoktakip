@@ -138,6 +138,99 @@ try {
             echo json_encode(['found' => false, 'message' => 'Barkod veritabaninda bulunamadi.']);
         }
     }
+    
+    // 8. HIZLI TRANSFER (Sunucu Tarafı Kontrolü Eklendi)
+    elseif ($islem === 'hizli_transfer') {
+        csrfKontrol($_GET['csrf_token'] ?? ''); 
+
+        // Gelen verileri al ve temizle
+        $amount = isset($_GET['amount']) ? (float)$_GET['amount'] : 0;
+        $new_cab_id = $_GET['new_cab_id'] ?? '';
+        
+        if ($amount <= 0 || empty($new_cab_id)) {
+            echo json_encode(['success' => false, 'error' => 'Geçersiz miktar veya hedef dolap.']);
+            return;
+        }
+
+        // 1. Ürünün mevcut durumunu veritabanından kontrol et (Sunucu Tarafı Kontrolü)
+        $stmt_current = $pdo->prepare("SELECT * FROM products WHERE id = ?");
+        $stmt_current->execute([$id]);
+        $urun = $stmt_current->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$urun) {
+            echo json_encode(['success' => false, 'error' => 'Ürün bulunamadı.']);
+            return;
+        }
+
+        $current_qty = (float)$urun['quantity'];
+        $current_cab_id = $urun['cabinet_id'];
+
+        // KRİTİK GÜVENLİK DÜZELTMESİ: Hedef dolap mevcut dolap mı?
+        if ($new_cab_id === $current_cab_id) {
+            echo json_encode(['success' => false, 'error' => 'Hedef dolap, ürünün mevcut dolabıyla aynı olamaz.']);
+            return;
+        }
+        
+        if ($amount > $current_qty) {
+            echo json_encode(['success' => false, 'error' => 'Transfer miktarı stok miktarını aşıyor.']);
+            return;
+        }
+        
+        // 2. Dolap adını al (Yanıt için)
+        $stmt_cab_name = $pdo->prepare("SELECT name FROM cabinets WHERE id = ?");
+        $stmt_cab_name->execute([$new_cab_id]);
+        $new_cab_name = $stmt_cab_name->fetchColumn() ?? 'Bilinmeyen Dolap';
+
+        // 3. İşlem: Transferi Gerçekleştir (Transaction ile güvenli)
+        $pdo->beginTransaction();
+        
+        try {
+            if ($amount === $current_qty) {
+                // Tamamı transfer ediliyorsa, mevcut kaydın dolap ID'sini güncelle
+                $update_sql = "UPDATE products SET cabinet_id = ? WHERE id = ?";
+                $pdo->prepare($update_sql)->execute([$new_cab_id, $id]);
+            } else {
+                // Kısmi transfer yapılıyorsa:
+                // a. Mevcut kaydın miktarını azalt
+                $update_sql = "UPDATE products SET quantity = quantity - ? WHERE id = ?";
+                $pdo->prepare($update_sql)->execute([$amount, $id]);
+
+                // b. Yeni bir ürün kaydı oluştur (Transfer edilen miktar için)
+                $new_id = uniqid('prod_');
+                $new_sql = "INSERT INTO products (id, name, brand, category, sub_category, quantity, unit, cabinet_id, shelf_location, purchase_date, expiry_date, added_by_user_id) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                
+                $pdo->prepare($new_sql)->execute([
+                    $new_id,
+                    $urun['name'],
+                    $urun['brand'],
+                    $urun['category'],
+                    $urun['sub_category'],
+                    $amount, // Yeni kaydın miktarı
+                    $urun['unit'],
+                    $new_cab_id, // Yeni dolap ID'si
+                    $urun['shelf_location'], 
+                    $urun['purchase_date'],
+                    $urun['expiry_date'],
+                    $urun['added_by_user_id']
+                ]);
+            }
+
+            $pdo->commit();
+            
+            echo json_encode([
+                'success' => true, 
+                'amount' => $amount, 
+                'unit' => $urun['unit'],
+                'new_cab_name' => $new_cab_name
+            ]);
+
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            error_log("Transfer Hatası: " . $e->getMessage());
+            echo json_encode(['success' => false, 'error' => 'Veritabanı işlemi başarısız: ' . $e->getMessage()]);
+        }
+    }
 
 
 } catch (PDOException $e) {
