@@ -42,6 +42,7 @@ try {
 
 <div class="w-full md:w-64 flex-shrink-0 space-y-4">
     
+    <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'ADMIN'): ?>
     <div class="bg-slate-900 text-white p-6 rounded-xl shadow-lg">
         <h2 class="text-xl font-bold mb-6 flex items-center gap-2">
             🛠️ Admin Paneli
@@ -81,15 +82,16 @@ try {
             </a>
 
             <a href="tuketim-analizi.php" class="hover:bg-slate-800 px-4 py-3 rounded text-sm font-medium transition flex items-center gap-3">
-    ⏳ Tüketim Analizi
-</a>
+                ⏳ Tüketim Analizi
+            </a>
 
         </nav>
     </div>
+    <?php endif; ?>
 
-    <div class="bg-white p-5 rounded-xl shadow border border-slate-200">
-        <h3 class="font-bold text-slate-700 mb-3 text-sm uppercase tracking-wider">Sistem Durumu</h3>
-        <ul class="text-sm space-y-3 text-slate-600">
+    <div class="bg-white dark:bg-slate-800 p-5 rounded-xl shadow border border-slate-200 dark:border-slate-700 transition-colors">
+        <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-3 text-sm uppercase tracking-wider">Sistem Durumu</h3>
+        <ul class="text-sm space-y-3 text-slate-600 dark:text-slate-400">
             <li class="flex justify-between items-center">
                 <span>Toplam Kullanıcı:</span> 
                 <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-bold"><?= $toplamKullanici ?></span>
