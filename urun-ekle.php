@@ -54,7 +54,7 @@ require 'header.php';
         </div>
     <?php endif; ?>
 
-    <form method="POST" class="space-y-6">
+    <form method="POST" class="space-y-6" id="kayitFormu">
         <?php echo csrfAlaniniEkle(); ?>
         
         <div class="bg-slate-50 dark:bg-slate-700/30 p-4 rounded-lg border border-slate-200 dark:border-slate-600 transition-colors">
@@ -151,12 +151,14 @@ require 'header.php';
             </div>
         </div>
 
-        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-bold text-lg shadow-lg shadow-blue-500/30 transition-colors">
-            Kayıt Defterine İşle
-        </button>
-    </form>
+        </form>
 </div>
 
+<div class="fixed bottom-0 left-0 right-0 p-4 bg-white dark:bg-slate-900 shadow-2xl border-t dark:border-slate-700 z-40 md:relative md:shadow-none md:p-0 md:mt-6 md:border-none md:block">
+    <button type="submit" form="kayitFormu" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-bold text-lg shadow-lg shadow-blue-500/30 transition-colors">
+        Kayıt Defterine İşle
+    </button>
+</div>
 <script>
 // SKT Toggle Fonksiyonu
 function toggleSKT() {
