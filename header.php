@@ -3,6 +3,11 @@
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+
+// CSP Nonce kontrolü (db.php'den gelmeli, yoksa boş tanımla hata vermesin)
+if (!isset($cspNonce)) {
+    $cspNonce = ''; 
+}
 ?>
 <!DOCTYPE html>
 <html lang="tr" class="light">
@@ -23,7 +28,7 @@ if (session_status() === PHP_SESSION_NONE) {
 
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.7.32/dist/sweetalert2.all.min.js" integrity="sha256-J7pX7ZJ8yX9xq3x8X1xY7x5x5x5x5x5x5x5x5x5x5w=" crossorigin="anonymous"></script>
 
-    <script>
+    <script nonce="<?= $cspNonce ?>">
         tailwind.config = {
             darkMode: 'class', 
             theme: {
@@ -34,7 +39,7 @@ if (session_status() === PHP_SESSION_NONE) {
         }
     </script>
 
-    <script>
+    <script nonce="<?= $cspNonce ?>">
         if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
             document.documentElement.classList.add('dark');
         } else {
@@ -177,7 +182,7 @@ if (session_status() === PHP_SESSION_NONE) {
 
 <div class="container mx-auto p-4 md:p-6">
 
-<script>
+<script nonce="<?= $cspNonce ?>">
     var themeToggleDarkIcon = document.getElementById('theme-toggle-dark-icon');
     var themeToggleLightIcon = document.getElementById('theme-toggle-light-icon');
 
