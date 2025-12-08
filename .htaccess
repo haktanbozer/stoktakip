@@ -1,8 +1,8 @@
 # ----------------------------------------------------------------------
-# 1. TEMEL GÜVENLİK AYARLARI
+# 1. TEMEL GÜVENLİK VE GİZLİLİK
 # ----------------------------------------------------------------------
 
-# Dizin listelemeyi kapat
+# Dizin listelemeyi kapat (Klasör içeriği görünmesin)
 Options -Indexes
 
 # Hassas dosyalara erişimi engelle
@@ -17,22 +17,41 @@ RewriteRule ^logs/ - [F,L]
 RewriteRule ^sessions/ - [F,L]
 
 # ----------------------------------------------------------------------
-# 2. GÜVENLİK VE SEO HEADERLARI (GÜNCELLENDİ)
+# 2. HTTP GÜVENLİK BAŞLIKLARI (MOZILLA OBSERVATORY İÇİN KRİTİK)
 # ----------------------------------------------------------------------
 
 <IfModule mod_headers.c>
-    # Arama motorlarını engelle (SEO)
-    Header set X-Robots-Tag "noindex, nofollow"
+    # 1. HSTS (Strict-Transport-Security)
+    # Tarayıcıyı 1 yıl boyunca sadece HTTPS kullanmaya zorlar. (Puanı en çok bu artırır)
+    # DİKKAT: Sitenizde SSL (https) kurulu değilse bu satırı silin!
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 
-    # --- CLICKJACKING KORUMASI (YENİ) ---
-    # Sitenin sadece kendi domaini üzerinde iframe içinde çalışmasına izin verir.
-    # Başka siteler sizin sitenizi gömemez.
-    Header set X-Frame-Options "SAMEORIGIN"
-    Header set Content-Security-Policy "frame-ancestors 'self'"
+    # 2. X-Content-Type-Options
+    # Tarayıcının dosya türlerini tahmin etmesini (MIME-sniffing) engeller.
+    Header always set X-Content-Type-Options "nosniff"
+
+    # 3. X-Frame-Options (Clickjacking Koruması)
+    # Sitenizin başka sitelerde iframe içinde açılmasını engeller.
+    Header always set X-Frame-Options "SAMEORIGIN"
+
+    # 4. Referrer-Policy
+    # Başka bir siteye link verildiğinde, tarayıcının ne kadar bilgi göndereceğini belirler.
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # 5. Content-Security-Policy (CSP) - En Güçlü Katman
+    # Sitenizin hangi kaynaklardan (resim, script, stil) veri yükleyebileceğini kısıtlar.
+    # 'unsafe-inline' kullanımı mecburen açık bırakıldı çünkü satır içi JS/CSS kullanıyoruz.
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.datatables.net https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.datatables.net; img-src 'self' data:; font-src 'self'; connect-src 'self' https://generativelanguage.googleapis.com; frame-ancestors 'self';"
+
+    # 6. Permissions-Policy (Gereksiz donanım erişimlerini kapatır)
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+    
+    # 7. Arama Motorlarını Engelle (Yönetim Paneli Olduğu İçin)
+    Header set X-Robots-Tag "noindex, nofollow"
 </IfModule>
 
 # ----------------------------------------------------------------------
-# 3. PERFORMANS OPTİMİZASYONU
+# 3. PERFORMANS OPTİMİZASYONU (Hızlandırma)
 # ----------------------------------------------------------------------
 
 # Gzip Sıkıştırma
@@ -46,7 +65,7 @@ RewriteRule ^sessions/ - [F,L]
     AddOutputFilterByType DEFLATE application/json
 </IfModule>
 
-# Tarayıcı Önbellekleme (Caching)
+# Tarayıcı Önbellekleme (Browser Caching)
 <IfModule mod_expires.c>
     ExpiresActive On
     ExpiresDefault "access plus 1 month"
@@ -54,8 +73,15 @@ RewriteRule ^sessions/ - [F,L]
     ExpiresByType application/javascript "access plus 1 year"
     ExpiresByType image/jpg "access plus 1 year"
     ExpiresByType image/jpeg "access plus 1 year"
-    ExpiresByType image/gif "access plus 1 year"
     ExpiresByType image/png "access plus 1 year"
     ExpiresByType image/svg+xml "access plus 1 year"
     ExpiresByType text/html "access plus 0 seconds"
+</IfModule>
+
+# ----------------------------------------------------------------------
+# 4. HTTPS YÖNLENDİRMESİ (ZORUNLU)
+# ----------------------------------------------------------------------
+<IfModule mod_rewrite.c>
+    RewriteCond %{HTTPS} off
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 </IfModule>
