@@ -1,5 +1,5 @@
 <?php
-// header.php - Otomatik + Manuel Dark Mode + Admin Linki + Bildirimler (Tam Versiyon)
+// header.php
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
@@ -13,6 +13,15 @@ if (session_status() === PHP_SESSION_NONE) {
     
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.tailwindcss.min.css">
+
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
     <script>
         tailwind.config = {
             darkMode: 'class', 
@@ -35,6 +44,7 @@ if (session_status() === PHP_SESSION_NONE) {
     <style>
         body { transition: background-color 0.3s, color 0.3s; }
         
+        /* Dark Mode Scrollbar */
         .dark ::-webkit-scrollbar { width: 8px; }
         .dark ::-webkit-scrollbar-track { background: #0f172a; }
         .dark ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
@@ -46,6 +56,29 @@ if (session_status() === PHP_SESSION_NONE) {
             border-color: #334155 !important;
         }
         .dark tr:hover { background-color: #1e293b !important; }
+
+        /* DataTables Özelleştirmeleri */
+        .dataTables_wrapper .dataTables_length select {
+            background-color: #fff;
+            padding-right: 2rem;
+            border-radius: 0.25rem;
+        }
+        .dark .dataTables_wrapper .dataTables_length select {
+            background-color: #1e293b;
+            color: #fff;
+            border-color: #334155;
+        }
+        .dark .dataTables_wrapper .dataTables_filter input {
+            background-color: #1e293b;
+            color: #fff;
+            border-color: #334155;
+            border-radius: 0.25rem;
+            padding: 0.25rem;
+        }
+        .dark .dataTables_info, .dark .dataTables_paginate {
+            color: #cbd5e1 !important;
+        }
+        .dataTables_wrapper { padding: 10px; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 dark:bg-slate-900 dark:text-slate-300 min-h-screen font-sans">
@@ -92,7 +125,7 @@ if (session_status() === PHP_SESSION_NONE) {
                             <div class="p-3 border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition relative group/item text-slate-800 dark:text-slate-200">
                                 <p class="text-sm font-bold"><?= htmlspecialchars($notif['product_name']) ?></p>
                                 <p class="text-xs text-red-500 font-medium"><?= $notif['days_remaining'] ?> gün kaldı</p>
-                                <a href="bildirim-oku.php?id=<?= $notif['id'] ?>&token=<?= $_SESSION['csrf_token'] ?>" class="absolute right-2 top-3 text-xs bg-slate-200 dark:bg-slate-600 hover:bg-blue-500 hover:text-white px-2 py-1 rounded opacity-0 group-hover/item:opacity-100 transition">✓</a>
+                                <a href="bildirim-oku.php?id=<?= $notif['id'] ?>&token=<?= $_SESSION['csrf_token'] ?? '' ?>" class="absolute right-2 top-3 text-xs bg-slate-200 dark:bg-slate-600 hover:bg-blue-500 hover:text-white px-2 py-1 rounded opacity-0 group-hover/item:opacity-100 transition">✓</a>
                             </div>
                             <?php endforeach; ?>
                         <?php endif; ?>
