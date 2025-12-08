@@ -9,6 +9,8 @@ $mesaj = '';
 
 // --- İŞLEMLER ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
     
     // Ekleme İşlemi
     if (isset($_POST['ekle'])) {
@@ -64,6 +66,7 @@ require 'header.php';
                     </p>
                     
                     <form method="POST" class="flex gap-2">
+                        <?php echo csrfAlaniniEkle(); ?>
                         <input type="number" name="gun" placeholder="Gün Sayısı" required min="1" class="flex-1 p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:focus:ring-blue-400 transition-colors">
                         <button type="submit" name="ekle" value="1" class="bg-blue-600 dark:bg-blue-700 text-white px-4 py-2 rounded hover:bg-blue-700 dark:hover:bg-blue-600 font-medium transition-colors">Ekle</button>
                     </form>
@@ -90,6 +93,7 @@ require 'header.php';
                                 📅 <?= $g ?> Gün Kala
                             </span>
                             <form method="POST" onsubmit="return confirm('Bu kuralı silmek istediğinize emin misiniz?')">
+                                <?php echo csrfAlaniniEkle(); ?>
                                 <input type="hidden" name="sil_gun" value="<?= $g ?>">
                                 <button type="submit" class="text-red-400 hover:text-red-600 dark:hover:text-red-400 p-2 opacity-60 group-hover:opacity-100 transition" title="Sil">✕</button>
                             </form>
