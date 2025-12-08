@@ -15,22 +15,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         if (isset($_POST['islem'])) {
             $islem = $_POST['islem'];
-            $id = uniqid('loc_'); 
+            $id = uniqid('loc_');
+            $logDetay = '';
 
             if ($islem === 'sehir_ekle') {
                 $stmt = $pdo->prepare("INSERT INTO cities (id, name) VALUES (?, ?)");
                 $stmt->execute([$id, $_POST['name']]);
                 $mesaj = "✅ Şehir eklendi.";
+                $logDetay = "Şehir eklendi: " . $_POST['name'];
             }
             elseif ($islem === 'mekan_ekle') {
                 $stmt = $pdo->prepare("INSERT INTO locations (id, city_id, name, type) VALUES (?, ?, ?, ?)");
                 $stmt->execute([$id, $_POST['city_id'], $_POST['name'], 'Ev']); 
                 $mesaj = "✅ Mekan eklendi.";
+                $logDetay = "Mekan eklendi: " . $_POST['name'];
             }
             elseif ($islem === 'oda_ekle') {
                 $stmt = $pdo->prepare("INSERT INTO rooms (id, location_id, name) VALUES (?, ?, ?)");
                 $stmt->execute([$id, $_POST['location_id'], $_POST['name']]);
                 $mesaj = "✅ Oda eklendi.";
+                $logDetay = "Oda eklendi: " . $_POST['name'];
             }
             elseif ($islem === 'dolap_ekle') {
                 $stmt = $pdo->prepare("INSERT INTO cabinets (id, room_id, name, height, width, depth, shelf_count, door_count, drawer_count, cooler_volume, freezer_volume, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
@@ -54,7 +58,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $type
                 ]);
                 $mesaj = "✅ Dolap/Buzdolabı tanımlandı.";
+                $logDetay = "Dolap eklendi: " . $_POST['name'];
             }
+            
+            // Audit Log (Ekleme)
+            if(function_exists('auditLog') && !empty($logDetay)) auditLog('EKLEME', $logDetay);
         }
 
         if (isset($_POST['sil_id']) && isset($_POST['tablo'])) {
@@ -62,8 +70,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $silId = $_POST['sil_id'];
             $izinliTablolar = ['cities', 'locations', 'rooms', 'cabinets'];
             if (in_array($tablo, $izinliTablolar)) {
+                // Silinen öğenin adını al (Log için)
+                $nameCol = "name";
+                $stmtCheck = $pdo->prepare("SELECT $nameCol FROM $tablo WHERE id = ?");
+                $stmtCheck->execute([$silId]);
+                $itemName = $stmtCheck->fetchColumn() ?? 'Bilinmeyen Öğe';
+
                 $stmt = $pdo->prepare("DELETE FROM $tablo WHERE id = ?");
                 $stmt->execute([$silId]);
+                
+                // Audit Log (Silme)
+                if(function_exists('auditLog')) auditLog('SİLME', "$tablo tablosundan '$itemName' silindi.");
+                
                 $mesaj = "🗑️ Kayıt silindi.";
             }
         }
@@ -120,7 +138,7 @@ require 'header.php';
                                 <tr class="group hover:bg-white dark:hover:bg-slate-700 transition-colors">
                                     <td class="p-3 font-medium text-slate-700 dark:text-slate-300"><?= htmlspecialchars($s['name']) ?></td>
                                     <td class="p-3 text-right">
-                                        <form method="POST" onsubmit="return confirm('Şehri silerseniz bağlı TÜM veriler silinir! Emin misiniz?')" class="inline">
+                                        <form method="POST" onsubmit="confirmDelete(event, 'Şehir', 'Şehri silerseniz bağlı TÜM veriler silinir!')" class="inline">
                                             <?php echo csrfAlaniniEkle(); ?>
                                             <input type="hidden" name="tablo" value="cities">
                                             <input type="hidden" name="sil_id" value="<?= $s['id'] ?>">
@@ -164,7 +182,7 @@ require 'header.php';
                                     <td class="p-2 font-medium text-slate-700 dark:text-slate-300"><?= htmlspecialchars($m['name']) ?></td>
                                     <td class="p-2 text-xs text-blue-500 dark:text-blue-400"><?= htmlspecialchars($m['city_name']) ?></td>
                                     <td class="p-2 text-right">
-                                        <form method="POST" onsubmit="return confirm('Silinsin mi?')" class="inline">
+                                        <form method="POST" onsubmit="confirmDelete(event, 'Mekan')" class="inline">
                                             <?php echo csrfAlaniniEkle(); ?>
                                             <input type="hidden" name="tablo" value="locations">
                                             <input type="hidden" name="sil_id" value="<?= $m['id'] ?>">
@@ -210,7 +228,7 @@ require 'header.php';
                                         <?= htmlspecialchars($o['loc_name']) ?> <span class="text-blue-500 dark:text-blue-400">(<?= htmlspecialchars($o['city_name']) ?>)</span>
                                     </td>
                                     <td class="p-2 text-right">
-                                        <form method="POST" onsubmit="return confirm('Silinsin mi?')" class="inline">
+                                        <form method="POST" onsubmit="confirmDelete(event, 'Oda')" class="inline">
                                             <?php echo csrfAlaniniEkle(); ?>
                                             <input type="hidden" name="tablo" value="rooms">
                                             <input type="hidden" name="sil_id" value="<?= $o['id'] ?>">
@@ -309,7 +327,7 @@ require 'header.php';
                                         </span>
                                     </td>
                                     <td class="p-2 text-right">
-                                        <form method="POST" onsubmit="return confirm('Dolabı silerseniz içindeki ürünler de silinir! Emin misiniz?')" class="inline">
+                                        <form method="POST" onsubmit="confirmDelete(event, 'Dolap', 'İçindeki tüm ürünler de silinecektir!')" class="inline">
                                             <?php echo csrfAlaniniEkle(); ?>
                                             <input type="hidden" name="tablo" value="cabinets">
                                             <input type="hidden" name="sil_id" value="<?= $d['id'] ?>">
@@ -348,6 +366,29 @@ function updateFields() {
         
         const div = document.querySelector(`div[data-field="${normalizedField}"]`);
         if(div) div.classList.remove('hidden');
+    });
+}
+
+// SweetAlert2 Silme Onayı
+function confirmDelete(event, itemType, warningText = 'Bu işlem geri alınamaz!') {
+    event.preventDefault();
+    const form = event.target;
+    
+    Swal.fire({
+        title: itemType + ' Silinecek!',
+        text: warningText,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        cancelButtonColor: '#94a3b8',
+        confirmButtonText: 'Evet, Sil',
+        cancelButtonText: 'İptal',
+        background: document.documentElement.classList.contains('dark') ? '#1e293b' : '#fff',
+        color: document.documentElement.classList.contains('dark') ? '#fff' : '#0f172a'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            form.submit();
+        }
     });
 }
 </script>
