@@ -15,6 +15,17 @@ session_save_path($session_folder);
 // Şimdi oturumu başlat
 session_start();
 
+// 1.1. CSRF TOKEN OLUŞTURMA (YENİ EKLENDİ)
+// Oturumda CSRF token yoksa, güvenli bir şekilde oluştur
+if (empty($_SESSION['csrf_token'])) {
+    if (function_exists('random_bytes')) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    } else {
+        // Daha az güvenli alternatif (eski PHP versiyonları için)
+        $_SESSION['csrf_token'] = bin2hex(openssl_random_pseudo_bytes(32));
+    }
+}
+
 // 2. Veritabanı Bağlantı Bilgileri
 $host = 'localhost';
 $db   = 'db';       // Kendi DB adın
@@ -42,6 +53,40 @@ function girisKontrol() {
         exit;
     }
 }
+
+// 3.1. CSRF KORUMA FONKSİYONLARI (YENİ EKLENDİ)
+/**
+ * Gelen CSRF token'i oturumdaki token ile kontrol eder.
+ * Eşleşmezse işlemi 403 hatasıyla durdurur.
+ * Tüm kritik POST/GET işlemlerinin başında çağrılmalıdır.
+ * @param string $token Gelen token (POST veya GET'ten)
+ */
+function csrfKontrol($token) {
+    if (!isset($_SESSION['csrf_token']) || $token !== $_SESSION['csrf_token']) {
+        // Saldırı girişimi olarak kabul et
+        http_response_code(403);
+        die("CSRF Hatası: Geçersiz güvenlik belirteci. İşlem engellendi.");
+    }
+}
+
+/**
+ * Formlara gizli CSRF token alanını eklemek için HTML çıktısı üretir.
+ * Formun içine <?php echo csrfAlaniniEkle(); ?> şeklinde eklenmelidir.
+ * @return string
+ */
+function csrfAlaniniEkle() {
+    // Token yoksa diye kontrol ediyoruz, normalde 1.1'de oluşmuş olmalı.
+    if (!isset($_SESSION['csrf_token'])) {
+        // Hata durumunda yeniden oluştur
+        if (function_exists('random_bytes')) {
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        } else {
+            $_SESSION['csrf_token'] = bin2hex(openssl_random_pseudo_bytes(32));
+        }
+    }
+    return '<input type="hidden" name="csrf_token" value="' . htmlspecialchars($_SESSION['csrf_token']) . '">';
+}
+
 
 // 4. Otomatik Bildirim Güncelleyici (DÜZELTİLDİ)
 function bildirimleriGuncelle($pdo) {
@@ -78,11 +123,9 @@ function bildirimleriGuncelle($pdo) {
 
 // Her sayfa açıldığında tetikle
 if(isset($_SESSION['user_id'])) {
-    // Hata bastırmayı geçici olarak açabiliriz, ama kod düzeltildiği için gerek kalmayacak
     try {
         bildirimleriGuncelle($pdo);
     } catch(Exception $e) {
-        // Bildirim hatası sistemi kilitlemesin
         error_log("Bildirim hatası: " . $e->getMessage());
     }
 }
