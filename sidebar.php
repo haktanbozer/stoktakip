@@ -34,15 +34,19 @@ try {
 
 // İstatistikler için veri çek
 try {
+    // Bu veri yalnızca ADMIN'e gösterileceği için, ADMIN kontrolü içinde kullanmak daha doğru olur.
+    // Ancak veriyi burada çekmek, Admin kontrolü PHP'de yapıldığı için performans açısından sorun yaratmaz.
     $toplamKullanici = $pdo->query("SELECT count(*) FROM users")->fetchColumn();
 } catch (Exception $e) {
     $toplamKullanici = "-";
 }
+
+$isAdmin = isset($_SESSION['role']) && $_SESSION['role'] === 'ADMIN';
 ?>
 
 <div class="w-full md:w-64 flex-shrink-0 space-y-4">
     
-    <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'ADMIN'): ?>
+    <?php if ($isAdmin): ?>
     <div class="bg-slate-900 text-white p-6 rounded-xl shadow-lg">
         <h2 class="text-xl font-bold mb-6 flex items-center gap-2">
             🛠️ Admin Paneli
@@ -89,6 +93,7 @@ try {
     </div>
     <?php endif; ?>
 
+    <?php if ($isAdmin): ?>
     <div class="bg-white dark:bg-slate-800 p-5 rounded-xl shadow border border-slate-200 dark:border-slate-700 transition-colors">
         <h3 class="font-bold text-slate-700 dark:text-slate-300 mb-3 text-sm uppercase tracking-wider">Sistem Durumu</h3>
         <ul class="text-sm space-y-3 text-slate-600 dark:text-slate-400">
@@ -104,4 +109,5 @@ try {
             </li>
         </ul>
     </div>
+    <?php endif; ?>
 </div>
