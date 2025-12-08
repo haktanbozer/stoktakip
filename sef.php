@@ -3,8 +3,8 @@ require 'db.php';
 girisKontrol();
 
 // --- AYARLAR ---
-// Güvenlik Uyarısı: Mümkünse API anahtarını .env dosyasından çekin
-$apiKey = 'api'; 
+// Güvenlik Uyarısı: API Anahtarı .env dosyasından okunuyor
+$apiKey = getenv('GEMINI_API_KEY'); 
 $mesaj = '';
 $tarif = '';
 
@@ -16,14 +16,10 @@ $izinVerilenGidaKategorileri = [
     'Sos', 'Tereyağı', 'Hazır Çorba', 'Kuruyemiş'
 ]; 
 
-// GÜVENLİK GÜNCELLEMESİ (SQL Injection Koruması):
-// Eski yöntem (Güvensiz): $kategoriKosulu = "'" . implode("','", $izinVerilenGidaKategorileri) . "'";
-// Yeni yöntem (Güvenli): Soru işaretleri (?) oluşturup execute ile veriyi yolluyoruz.
-
-// Array eleman sayısı kadar virgülle ayrılmış soru işareti oluştur: ?,?,?,?
+// SQL Injection Koruması: Placeholder kullanımı
 $placeholders = implode(',', array_fill(0, count($izinVerilenGidaKategorileri), '?'));
 
-// Sorguyu Hazırla
+// Malzemeleri Çek
 $sql = "SELECT 
             p.name, 
             p.quantity, 
@@ -34,24 +30,19 @@ $sql = "SELECT
         FROM products p 
         WHERE p.quantity > 0 
           AND p.category IN ($placeholders) 
-          /* SKT'si ya 14 gün içinde dolmuş/dolacak olanları al, ya da SKT'si NULL olanları al */
           AND (p.expiry_date <= DATE_ADD(CURRENT_DATE(), INTERVAL 14 DAY) OR p.expiry_date IS NULL)
         ORDER BY (p.expiry_date IS NULL), p.expiry_date ASC, p.name ASC 
         LIMIT 30";
 
-// Sorguyu Çalıştır (Parametreleri güvenli şekilde gönder)
 $stmt = $pdo->prepare($sql);
 $stmt->execute($izinVerilenGidaKategorileri);
 $urunler = $stmt->fetchAll(); 
 
-
-// Malzeme Listesini Metne Çevir (AI Prompt İçin)
+// Malzeme Listesini Metne Çevir
 $malzemeListesi = [];
 $bugun = time();
 foreach ($urunler as $u) {
     $ekBilgi = "";
-    
-    // SKT Kontrolü
     if ($u['expiry_date']) {
         $skt = strtotime($u['expiry_date']);
         $kalanGun = ceil(($skt - $bugun) / (60 * 60 * 24));
@@ -61,7 +52,6 @@ foreach ($urunler as $u) {
             $ekBilgi = "({$kalanGun} GÜN KALDI)";
         }
     }
-
     $malzemeListesi[] = "{$u['name']} (Alt Kategori: {$u['sub_category']}) ({$u['quantity']} {$u['unit']}) {$ekBilgi}";
 }
 $malzemeMetni = implode('; ', $malzemeListesi);
@@ -73,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['oner'])) {
     csrfKontrol($_POST['csrf_token'] ?? '');
     
     if (empty($apiKey)) {
-        $mesaj = "⚠️ API anahtarı eksik.";
+        $mesaj = "⚠️ API anahtarı eksik (.env kontrol edin).";
     } elseif (empty($malzemeMetni)) {
         $mesaj = "⚠️ Menü önerisi için stokta yeterli gıda malzemesi bulunmuyor.";
     } else {
@@ -82,11 +72,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['oner'])) {
         Bu malzemelerin çoğunu (hepsini kullanmak zorunda değilsin) kullanarak yapabileceğim lezzetli bir yemek tarifi öner. 
         Evde yağ, tuz, salça, baharat gibi temel malzemelerin olduğunu varsay.
         Cevabı şu formatta ver:
-        1. Yemek Adı (Kalın ve büyük)
+        1. Yemek Adı (Kalın ve büyük - ## Başlık şeklinde)
         2. Kısa ve iştah açıcı bir açıklama.
         3. Gerekli Malzemeler listesi.
         4. Adım adım yapılışı.
-        5. Şefin Püf Noktası.";
+        5. Şefin Püf Noktası.
+        Not: Önemli yerleri **kalın** yazarak belirt.";
 
         $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" . $apiKey;
         
@@ -116,8 +107,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['oner'])) {
 
             if (isset($result['candidates'][0]['content']['parts'][0]['text'])) {
                 $hamMetin = $result['candidates'][0]['content']['parts'][0]['text'];
-                $tarif = nl2br(htmlspecialchars($hamMetin));
-                $tarif = str_replace(['**', '##', '#'], '', $tarif); 
+                
+                // --- XSS KORUMASI VE FORMATLAMA (GÜVENLİ YÖNTEM) ---
+                
+                // 1. Tüm HTML etiketlerini temizle (En güvenli adım)
+                $guvenliMetin = htmlspecialchars($hamMetin, ENT_QUOTES, 'UTF-8');
+                
+                // 2. Markdown işaretlerini kontrollü olarak HTML'e çevir
+                
+                // Başlıkları (## Başlık) -> <h3> etiketi
+                $guvenliMetin = preg_replace('/^## (.*?)$/m', '<h3 class="text-xl font-bold text-slate-800 dark:text-white mt-4 mb-2 border-b border-orange-200 pb-1">$1</h3>', $guvenliMetin);
+                
+                // Kalın yazıları (**yazı**) -> <strong> etiketi
+                $guvenliMetin = preg_replace('/\*\*(.*?)\*\*/', '<strong class="text-purple-700 dark:text-purple-400 font-bold">$1</strong>', $guvenliMetin);
+                
+                // İtalik yazıları (*yazı*) -> <em> etiketi
+                $guvenliMetin = preg_replace('/\*(.*?)\*/', '<em class="text-slate-600 dark:text-slate-400">$1</em>', $guvenliMetin);
+
+                // Listeleri (- Madde) -> Listeye benzer yapı
+                $guvenliMetin = preg_replace('/^(\*|\-) (.*?)$/m', '<li class="ml-4 list-disc marker:text-orange-500">$2</li>', $guvenliMetin);
+
+                // 3. Satır sonlarını <br> yap ve listeleri <ul> içine al (Basit çözüm)
+                $tarif = nl2br($guvenliMetin);
+                
             } else {
                 $hataDetayi = isset($result['error']['message']) ? $result['error']['message'] : 'Bilinmeyen hata';
                 $mesaj = "❌ Hata: " . $hataDetayi;
@@ -193,7 +205,7 @@ require 'header.php';
                             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5"/><path d="M8.5 8.5v.01"/><path d="M16 15.5v.01"/><path d="M12 12v.01"/><path d="M11 17a2 2 0 0 1 2 2"/></svg>
                             <h3 class="font-bold text-xl">Şefin Önerisi Hazır!</h3>
                         </div>
-                        <div class="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line bg-orange-50/50 dark:bg-orange-900/30 p-6 rounded-lg border border-orange-100 dark:border-orange-800">
+                        <div class="text-slate-700 dark:text-slate-300 leading-relaxed bg-orange-50/50 dark:bg-orange-900/30 p-6 rounded-lg border border-orange-100 dark:border-orange-800">
                             <?= $tarif ?>
                         </div>
                     </div>
