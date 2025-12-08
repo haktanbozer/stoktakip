@@ -13,7 +13,10 @@ try {
         if(!isset($host)) { 
             $host = 'localhost'; $db = 'haktaace_stok'; $user = 'haktaace_stok'; $pass = 'wJY5LYrLXAH6pS3DQSMx';
         }
-        try { $dsn = "mysql:host=$host;dbname=$db;charset=utf8mb4"; $pdo = new PDO($dsn, $user, $pass); } catch (PDOException $ex) {}
+        try { 
+            $dsn = "mysql:host=$host;dbname=$db;charset=utf8mb4"; 
+            $pdo = new PDO($dsn, $user, $pass); 
+        } catch (PDOException $ex) {}
     }
 }
 
@@ -26,22 +29,23 @@ try {
 
 $isAdmin = isset($_SESSION['role']) && $_SESSION['role'] === 'ADMIN';
 
-// Menü öğeleri için yardımcı fonksiyon (Kod tekrarını önlemek ve temiz görünüm için)
+// Menü öğeleri için yardımcı fonksiyon
 function menuLink($url, $icon, $text, $currentPage) {
     $isActive = ($currentPage == $url);
-    // Aktif ve Pasif durumlar için stil sınıfları
+    
+    // Temel stil
     $baseClass = "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group";
     
     if ($isActive) {
-        // Aktif Sayfa Stili (Mavi zemin, mavi yazı)
+        // Aktif Sayfa Stili
         $styleClass = "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 shadow-sm ring-1 ring-blue-200 dark:ring-blue-800";
     } else {
-        // Pasif Sayfa Stili (Gri yazı, hoverda hafif renklenme)
+        // Pasif Sayfa Stili
         $styleClass = "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 hover:text-slate-900 dark:hover:text-slate-200";
     }
 
-    echo "<a href='$url' class='$baseClass $styleClass'>
-            <span class='text-lg opacity-80 group-hover:opacity-100 transition-opacity'>$icon</span>
+    echo "<a href=\"$url\" class=\"$baseClass $styleClass\">
+            <span class=\"text-lg opacity-80 group-hover:opacity-100 transition-opacity\">$icon</span>
             <span>$text</span>
           </a>";
 }
