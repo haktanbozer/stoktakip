@@ -2,10 +2,8 @@
 // db.php
 
 // 1. .env Dosyasını Yükle (Basit Native Env Loader)
-// Bu fonksiyon .env dosyasını okur ve ortam değişkenlerine atar
 function yukleEnv($yol) {
     if (!file_exists($yol)) {
-        // .env yoksa sessizce devam et (Veya hata fırlatılabilir)
         return;
     }
     $satirlar = file($yol, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
@@ -32,13 +30,16 @@ if (!file_exists($session_folder)) { mkdir($session_folder, 0755, true); }
 session_save_path($session_folder);
 session_start();
 
-// 2.1. CSRF TOKEN OLUŞTURMA
-if (empty($_SESSION['csrf_token'])) {
+// 2.1. CSRF TOKEN OLUŞTURMA (ZAMAN AŞIMI KONTROLLÜ - YENİ)
+// Token yoksa VEYA tokenın ömrü 1 saati (3600 saniye) geçtiyse yenile
+if (empty($_SESSION['csrf_token']) || !isset($_SESSION['csrf_token_time']) || (time() - $_SESSION['csrf_token_time']) > 3600) {
     if (function_exists('random_bytes')) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     } else {
         $_SESSION['csrf_token'] = bin2hex(openssl_random_pseudo_bytes(32));
     }
+    // Token oluşturulma zamanını kaydet
+    $_SESSION['csrf_token_time'] = time();
 }
 
 // --- LOGLAMA MEKANİZMASI ---
@@ -52,6 +53,51 @@ function sistemLogla($mesaj, $seviye = 'ERROR') {
     $logIcerigi = sprintf("[%s] [%s] %s%s", date('Y-m-d H:i:s'), $seviye, $mesaj, PHP_EOL);
     error_log($logIcerigi, 3, $logDosyasi);
 }
+
+// --- GLOBAL HATA YAKALAYICILAR (YENİ EKLENDİ) ---
+
+// 1. Uyarılar ve Noticeler için
+set_error_handler(function($errno, $errstr, $errfile, $errline) {
+    if (!(error_reporting() & $errno)) {
+        return;
+    }
+    
+    $seviye = 'ERROR';
+    if ($errno === E_WARNING || $errno === E_USER_WARNING) $seviye = 'WARNING';
+    if ($errno === E_NOTICE || $errno === E_USER_NOTICE) $seviye = 'INFO';
+    
+    $mesaj = "$errstr | Dosya: $errfile | Satır: $errline";
+    sistemLogla($mesaj, $seviye);
+    
+    return false; // Standart PHP işlemine devam et (Ekranda görünmesini engellemek için true yapabilirsiniz)
+});
+
+// 2. Yakalanmamış İstisnalar için
+set_exception_handler(function($e) {
+    $mesaj = "Yakalanmamış İstisna: " . $e->getMessage() . " | Dosya: " . $e->getFile() . " | Satır: " . $e->getLine();
+    sistemLogla($mesaj, 'CRITICAL');
+    
+    if (!headers_sent()) {
+         if(file_exists('error.php')) {
+             header("Location: error.php");
+             exit;
+         }
+    }
+    echo "Sistemde teknik bir sorun oluştu.";
+});
+
+// 3. Kritik Hatalar (Fatal Errors) için
+register_shutdown_function(function() {
+    $error = error_get_last();
+    if ($error !== NULL && in_array($error['type'], [E_ERROR, E_CORE_ERROR, E_COMPILE_ERROR, E_RECOVERABLE_ERROR])) {
+         $mesaj = "Kritik Hata (Fatal): " . $error['message'] . " | Dosya: " . $error['file'] . " | Satır: " . $error['line'];
+         sistemLogla($mesaj, 'FATAL');
+         
+         if (!headers_sent() && file_exists('error.php')) {
+             header("Location: error.php");
+         }
+    }
+});
 
 // --- AUDIT LOG MEKANİZMASI ---
 function auditLog($islem, $detay) {
@@ -79,7 +125,6 @@ $user = getenv('DB_USER');
 $pass = getenv('DB_PASS');
 $charset = 'utf8mb4';
 
-// Eğer .env okunamazsa varsayılan hata
 if (!$host || !$db || !$user) {
     die("Veritabanı yapılandırma hatası. .env dosyası eksik veya hatalı.");
 }
@@ -124,17 +169,16 @@ function girisKontrol() {
 }
 
 function csrfKontrol($token) {
+    // Süre dolmuşsa bile hata verir, çünkü token yenilenmiştir ama formdaki eskidir.
     if (!isset($_SESSION['csrf_token']) || $token !== $_SESSION['csrf_token']) {
-        sistemLogla("CSRF Hatası: IP: " . ($_SERVER['REMOTE_ADDR'] ?? 'Bilinmiyor'), 'SECURITY');
+        sistemLogla("CSRF Hatası (Token uyuşmazlığı veya zaman aşımı): IP: " . ($_SERVER['REMOTE_ADDR'] ?? 'Bilinmiyor'), 'SECURITY');
         http_response_code(403);
-        die("Güvenlik Hatası: İşlem doğrulanamadı.");
+        die("Güvenlik Hatası: Oturumunuzun süresi dolmuş veya işlem doğrulanamadı. Lütfen sayfayı yenileyip tekrar deneyin.");
     }
 }
 
 function csrfAlaniniEkle() {
-    if (!isset($_SESSION['csrf_token'])) {
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-    }
+    // Burada tekrar kontrol etmeye gerek yok, sayfa başında zaten set edildi.
     return '<input type="hidden" name="csrf_token" value="' . htmlspecialchars($_SESSION['csrf_token']) . '">';
 }
 
