@@ -8,48 +8,95 @@ if (isset($_SESSION['user_id'])) {
 }
 
 $error = '';
+$ip_address = $_SERVER['REMOTE_ADDR'];
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // KRİTİK GÜVENLİK İYİLEŞTİRMESİ: CSRF token kontrolü
+// --- RATE LIMITING KONTROLÜ (Giriş işleminden önce bak) ---
+// Bu IP daha önce engellenmiş mi?
+$stmtCheck = $pdo->prepare("SELECT * FROM login_attempts WHERE ip_address = ?");
+$stmtCheck->execute([$ip_address]);
+$attempt = $stmtCheck->fetch();
+
+if ($attempt) {
+    // Eğer kilit süresi varsa ve henüz dolmadıysa
+    if ($attempt['locked_until'] && strtotime($attempt['locked_until']) > time()) {
+        $kalanDakika = ceil((strtotime($attempt['locked_until']) - time()) / 60);
+        $error = "⛔ Çok fazla başarısız deneme! Güvenliğiniz için $kalanDakika dakika beklemelisiniz.";
+    }
+}
+
+// Hata yoksa (Engelli değilse) POST işlemini al
+if (empty($error) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    // CSRF token kontrolü
     csrfKontrol($_POST['csrf_token'] ?? '');
     
     $username = $_POST['username'] ?? '';
     $password = $_POST['password'] ?? '';
-
-    // Beni Hatırla işaretli mi?
     $remember_me = isset($_POST['remember_me']);
 
+    // Kullanıcıyı bul
     $stmt = $pdo->prepare("SELECT id, username, password, role FROM users WHERE username = ?");
     $stmt->execute([$username]);
     $user = $stmt->fetch();
 
     if ($user && password_verify($password, $user['password'])) {
-        // Oturum Başlatma
+        // --- BAŞARILI GİRİŞ ---
+        
+        // 1. Başarılı olduğu için hata sayacını sıfırla (IP'yi temizle)
+        $pdo->prepare("DELETE FROM login_attempts WHERE ip_address = ?")->execute([$ip_address]);
+
+        // 2. Oturumu Başlat
         $_SESSION['user_id'] = $user['id'];
         $_SESSION['username'] = $user['username'];
         $_SESSION['role'] = $user['role'];
         
-        // --- BENİ HATIRLA MANTIĞI ---
+        // Audit Log (Başarılı Giriş)
+        if(function_exists('auditLog')) auditLog('LOGIN', "Kullanıcı giriş yaptı: {$user['username']}");
+
+        // 3. Beni Hatırla
         if ($remember_me) {
-            // 1. Güvenli ve rastgele bir token oluşturun
             $token = bin2hex(random_bytes(32)); 
-            $expiry = time() + (30 * 24 * 60 * 60); // 30 gün
-            
-            // 2. Token'ı veritabanına kaydedin
+            $expiry = time() + (30 * 24 * 60 * 60);
             $stmt_update = $pdo->prepare("UPDATE users SET remember_token = ? WHERE id = ?");
             $stmt_update->execute([$token, $user['id']]);
-            
-            // 3. Güvenli çerezi oluşturun (secure ve httponly)
-            // Not: setcookie son iki parametresini (true, true), siteniz HTTPS kullanıyorsa kullanın.
             $secure_cookie = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'; 
             setcookie('remember_user', $token, $expiry, '/', '', $secure_cookie, true);
         }
 
-        // Şehir seçimine yönlendir
         header("Location: sehir-sec.php");
         exit;
+
     } else {
-        $error = "Hatalı kullanıcı adı veya şifre!";
+        // --- BAŞARISIZ GİRİŞ ---
+        
+        $limit = 5; // Deneme hakkı
+        $lockout_time = 15; // Dakika
+        
+        if ($attempt) {
+            // Zaten kaydı var, sayısını artır
+            $new_count = $attempt['attempts'] + 1;
+            
+            if ($new_count >= $limit) {
+                // LİMİT AŞILDI: Kilitle
+                $locked_until = date('Y-m-d H:i:s', time() + ($lockout_time * 60));
+                $stmtUpd = $pdo->prepare("UPDATE login_attempts SET attempts = ?, locked_until = ?, last_attempt = NOW() WHERE ip_address = ?");
+                $stmtUpd->execute([$new_count, $locked_until, $ip_address]);
+                
+                $error = "⛔ Çok fazla deneme yaptınız. $lockout_time dakika engellendiniz.";
+                
+                // Güvenlik Logu
+                if(function_exists('sistemLogla')) sistemLogla("Brute Force Şüphesi: IP $ip_address engellendi.", 'SECURITY');
+                
+            } else {
+                // Henüz limit dolmadı, artır
+                $pdo->prepare("UPDATE login_attempts SET attempts = attempts + 1, last_attempt = NOW() WHERE ip_address = ?")->execute([$ip_address]);
+                $kalan = $limit - $new_count;
+                $error = "Hatalı giriş! Kalan hakkınız: $kalan";
+            }
+        } else {
+            // İlk hatalı deneme, kayıt oluştur
+            $pdo->prepare("INSERT INTO login_attempts (ip_address, attempts, last_attempt) VALUES (?, 1, NOW())")->execute([$ip_address]);
+            $error = "Hatalı kullanıcı adı veya şifre! (Kalan hak: " . ($limit - 1) . ")";
+        }
     }
 }
 ?>
@@ -59,18 +106,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Giriş Yap - StokTakip</title>
-    
     <script src="https://cdn.tailwindcss.com"></script>
-    
     <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {}
-            }
-        }
+        tailwind.config = { darkMode: 'class', theme: { extend: {} } }
     </script>
-
     <script>
         if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
             document.documentElement.classList.add('dark');
@@ -78,17 +117,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             document.documentElement.classList.remove('dark');
         }
     </script>
-
-    <style>
-        body { transition: background-color 0.3s, color 0.3s; }
-    </style>
+    <style> body { transition: background-color 0.3s, color 0.3s; } </style>
 </head>
 <body class="bg-slate-100 dark:bg-slate-900 flex items-center justify-center min-h-screen relative transition-colors">
-
-    <button id="theme-toggle" type="button" class="absolute top-4 right-4 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-gray-700 rounded-lg text-sm p-2.5 transition">
-        <svg id="theme-toggle-light-icon" class="hidden w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
-        <svg id="theme-toggle-dark-icon" class="hidden w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path></svg>
-    </button>
 
     <div class="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-200 dark:border-slate-700 transition-colors">
         <div class="text-center mb-8">
@@ -97,11 +128,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
         
         <?php if($error): ?>
-            <div class="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 p-3 rounded mb-4 text-center text-sm border border-red-200 dark:border-red-800">
+            <div class="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 p-4 rounded mb-6 text-center text-sm border border-red-200 dark:border-red-800 font-bold">
                 <?= $error ?>
             </div>
         <?php endif; ?>
 
+        <?php if(empty($attempt['locked_until']) || strtotime($attempt['locked_until']) < time()): ?>
         <form method="POST" class="space-y-6">
             <?php echo csrfAlaniniEkle(); ?>
             <div>
@@ -124,43 +156,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 Giriş Yap
             </button>
         </form>
+        <?php else: ?>
+            <div class="text-center py-4">
+                <p class="text-slate-500 dark:text-slate-400 text-sm">Lütfen sürenin dolmasını bekleyin.</p>
+                <button onclick="window.location.reload()" class="mt-4 bg-slate-200 dark:bg-slate-700 px-4 py-2 rounded text-sm hover:bg-slate-300 dark:hover:bg-slate-600 transition">Sayfayı Yenile</button>
+            </div>
+        <?php endif; ?>
     </div>
 
-    <script>
-        var themeToggleDarkIcon = document.getElementById('theme-toggle-dark-icon');
-        var themeToggleLightIcon = document.getElementById('theme-toggle-light-icon');
-
-        // İkon durumunu ayarla
-        if (document.documentElement.classList.contains('dark')) {
-            themeToggleLightIcon.classList.remove('hidden');
-        } else {
-            themeToggleDarkIcon.classList.remove('hidden');
-        }
-
-        var themeToggleBtn = document.getElementById('theme-toggle');
-
-        themeToggleBtn.addEventListener('click', function() {
-            themeToggleDarkIcon.classList.toggle('hidden');
-            themeToggleLightIcon.classList.toggle('hidden');
-
-            if (localStorage.getItem('color-theme')) {
-                if (localStorage.getItem('color-theme') === 'light') {
-                    document.documentElement.classList.add('dark');
-                    localStorage.setItem('color-theme', 'dark');
-                } else {
-                    document.documentElement.classList.remove('dark');
-                    localStorage.setItem('color-theme', 'light');
-                }
-            } else {
-                if (document.documentElement.classList.contains('dark')) {
-                    document.documentElement.classList.remove('dark');
-                    localStorage.setItem('color-theme', 'light');
-                } else {
-                    document.documentElement.classList.add('dark');
-                    localStorage.setItem('color-theme', 'dark');
-                }
-            }
-        });
-    </script>
 </body>
 </html>
