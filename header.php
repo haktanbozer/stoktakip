@@ -92,7 +92,7 @@ if (session_status() === PHP_SESSION_NONE) {
                             <div class="p-3 border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition relative group/item text-slate-800 dark:text-slate-200">
                                 <p class="text-sm font-bold"><?= htmlspecialchars($notif['product_name']) ?></p>
                                 <p class="text-xs text-red-500 font-medium"><?= $notif['days_remaining'] ?> gün kaldı</p>
-                                <a href="bildirim-oku.php?id=<?= $notif['id'] ?>" class="absolute right-2 top-3 text-xs bg-slate-200 dark:bg-slate-600 hover:bg-blue-500 hover:text-white px-2 py-1 rounded opacity-0 group-hover/item:opacity-100 transition">✓</a>
+                                <a href="bildirim-oku.php?id=<?= $notif['id'] ?>&token=<?= $_SESSION['csrf_token'] ?>" class="absolute right-2 top-3 text-xs bg-slate-200 dark:bg-slate-600 hover:bg-blue-500 hover:text-white px-2 py-1 rounded opacity-0 group-hover/item:opacity-100 transition">✓</a>
                             </div>
                             <?php endforeach; ?>
                         <?php endif; ?>
