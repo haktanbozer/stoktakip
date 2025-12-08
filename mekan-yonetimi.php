@@ -6,6 +6,9 @@ $mesaj = '';
 
 // --- POST İŞLEMLERİ ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
+    
     try {
         if (isset($_POST['islem'])) {
             $islem = $_POST['islem'];
@@ -102,6 +105,7 @@ require 'header.php';
                 <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow border border-slate-200 dark:border-slate-700 transition-colors">
                     <h3 class="font-bold text-lg mb-4 text-blue-600 dark:text-blue-400 border-b dark:border-slate-700 pb-2">1. Şehir Yönetimi</h3>
                     <form method="POST" class="flex gap-2 mb-6">
+                        <?php echo csrfAlaniniEkle(); ?>
                         <input type="hidden" name="islem" value="sehir_ekle">
                         <input type="text" name="name" placeholder="Örn: İstanbul" required class="flex-1 p-2 border rounded text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-colors">
                         <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm transition-colors">Ekle</button>
@@ -114,6 +118,7 @@ require 'header.php';
                                     <td class="p-3 font-medium text-slate-700 dark:text-slate-300"><?= htmlspecialchars($s['name']) ?></td>
                                     <td class="p-3 text-right">
                                         <form method="POST" onsubmit="return confirm('Şehri silerseniz bağlı TÜM veriler silinir! Emin misiniz?')" class="inline">
+                                            <?php echo csrfAlaniniEkle(); ?>
                                             <input type="hidden" name="tablo" value="cities">
                                             <input type="hidden" name="sil_id" value="<?= $s['id'] ?>">
                                             <button type="submit" class="text-red-400 hover:text-red-600 dark:hover:text-red-300 p-1 transition-colors">✕</button>
@@ -132,6 +137,7 @@ require 'header.php';
                 <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow border border-slate-200 dark:border-slate-700 transition-colors">
                     <h3 class="font-bold text-lg mb-4 text-blue-600 dark:text-blue-400 border-b dark:border-slate-700 pb-2">2. Mekan Yönetimi</h3>
                     <form method="POST" class="space-y-3 mb-6">
+                        <?php echo csrfAlaniniEkle(); ?>
                         <input type="hidden" name="islem" value="mekan_ekle">
                         <div class="flex gap-2">
                             <select name="city_id" required class="w-1/3 p-2 border rounded text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white transition-colors">
@@ -156,6 +162,7 @@ require 'header.php';
                                     <td class="p-2 text-xs text-blue-500 dark:text-blue-400"><?= htmlspecialchars($m['city_name']) ?></td>
                                     <td class="p-2 text-right">
                                         <form method="POST" onsubmit="return confirm('Silinsin mi?')" class="inline">
+                                            <?php echo csrfAlaniniEkle(); ?>
                                             <input type="hidden" name="tablo" value="locations">
                                             <input type="hidden" name="sil_id" value="<?= $m['id'] ?>">
                                             <button type="submit" class="text-red-400 hover:text-red-600 dark:hover:text-red-300 p-1 transition-colors">✕</button>
@@ -174,6 +181,7 @@ require 'header.php';
                 <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow border border-slate-200 dark:border-slate-700 transition-colors">
                     <h3 class="font-bold text-lg mb-4 text-blue-600 dark:text-blue-400 border-b dark:border-slate-700 pb-2">3. Oda Yönetimi</h3>
                     <form method="POST" class="space-y-3 mb-6">
+                        <?php echo csrfAlaniniEkle(); ?>
                         <input type="hidden" name="islem" value="oda_ekle">
                         <div class="flex gap-2">
                             <select name="location_id" required class="w-1/2 p-2 border rounded text-sm text-ellipsis overflow-hidden dark:bg-slate-700 dark:border-slate-600 dark:text-white transition-colors">
@@ -200,6 +208,7 @@ require 'header.php';
                                     </td>
                                     <td class="p-2 text-right">
                                         <form method="POST" onsubmit="return confirm('Silinsin mi?')" class="inline">
+                                            <?php echo csrfAlaniniEkle(); ?>
                                             <input type="hidden" name="tablo" value="rooms">
                                             <input type="hidden" name="sil_id" value="<?= $o['id'] ?>">
                                             <button type="submit" class="text-red-400 hover:text-red-600 dark:hover:text-red-300 p-1 transition-colors">✕</button>
@@ -219,6 +228,7 @@ require 'header.php';
                     <h3 class="font-bold text-lg mb-4 text-blue-600 dark:text-blue-400 border-b dark:border-slate-700 pb-2">4. Dolap & Raf Yönetimi</h3>
                     
                     <form method="POST" class="space-y-4 mb-6" id="dolapForm">
+                        <?php echo csrfAlaniniEkle(); ?>
                         <input type="hidden" name="islem" value="dolap_ekle">
                         
                         <div class="flex gap-2">
@@ -297,6 +307,7 @@ require 'header.php';
                                     </td>
                                     <td class="p-2 text-right">
                                         <form method="POST" onsubmit="return confirm('Dolabı silerseniz içindeki ürünler de silinir! Emin misiniz?')" class="inline">
+                                            <?php echo csrfAlaniniEkle(); ?>
                                             <input type="hidden" name="tablo" value="cabinets">
                                             <input type="hidden" name="sil_id" value="<?= $d['id'] ?>">
                                             <button type="submit" class="text-red-400 hover:text-red-600 dark:hover:text-red-300 p-1 transition-colors">✕</button>
@@ -319,7 +330,7 @@ require 'header.php';
 function updateFields() {
     const select = document.getElementById('typeSelect');
     const selectedOption = select.options[select.selectedIndex];
-    const fields = selectedOption.getAttribute('data-fields') ? selectedOption.getAttribute('data-fields').split(',') : [];
+    const fields = selectedOption.getAttribute('data-fields') ? select.options[select.selectedIndex].getAttribute('data-fields').split(',') : [];
     
     document.querySelectorAll('#dynamicFields > div').forEach(div => div.classList.add('hidden'));
     
