@@ -5,7 +5,10 @@ girisKontrol();
 if ($_SESSION['role'] !== 'ADMIN') die("Yetkisiz erişim.");
 
 // Logları Temizle (Eski kayıtları silmek için)
-if (isset($_POST['temizle'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['temizle'])) {
+    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
+    
     $pdo->query("DELETE FROM notification_logs");
     header("Location: bildirim-gecmisi.php");
     exit;
@@ -28,6 +31,7 @@ require 'header.php';
             
             <?php if(!empty($loglar)): ?>
             <form method="POST" onsubmit="return confirm('Tüm log kayıtları silinecek! Emin misiniz?')">
+                <?php echo csrfAlaniniEkle(); ?>
                 <button type="submit" name="temizle" value="1" class="bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300 px-4 py-2 rounded text-sm hover:bg-red-100 dark:hover:bg-red-900/50 transition border border-red-200 dark:border-red-800">
                     🗑️ Geçmişi Temizle
                 </button>
