@@ -3,12 +3,23 @@ require 'db.php';
 girisKontrol();
 
 // Silme
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sil_urun_id'])) {
+    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
+
+    $stmt = $pdo->prepare("DELETE FROM products WHERE id = ?");
+    $stmt->execute([$_POST['sil_urun_id']]);
+    header("Location: envanter.php?silindi=1");
+    exit;
+}
+/* Orijinal GET silme bloğu kaldırıldı:
 if (isset($_GET['sil'])) {
     $stmt = $pdo->prepare("DELETE FROM products WHERE id = ?");
     $stmt->execute([$_GET['sil']]);
     header("Location: envanter.php?silindi=1");
     exit;
 }
+*/
 
 // --- FİLTRELEME & SORGULAMA ---
 $params = [];
@@ -287,7 +298,11 @@ require 'header.php';
                                 </td>
                                 <td class="px-4 py-3 text-right">
                                     <a href="urun-duzenle.php?id=<?= $urun['id'] ?>" class="text-blue-600 dark:text-blue-400 hover:underline mr-2 text-xs font-bold">DÜZENLE</a>
-                                    <a href="?sil=<?= $urun['id'] ?>" onclick="return confirm('Silinsin mi?')" class="text-red-500 dark:text-red-400 hover:underline text-xs">SİL</a>
+                                    <form method="POST" onsubmit="return confirm('Silinsin mi?')" class="inline">
+                                        <?php echo csrfAlaniniEkle(); ?>
+                                        <input type="hidden" name="sil_urun_id" value="<?= $urun['id'] ?>">
+                                        <button type="submit" class="text-red-500 dark:text-red-400 hover:underline text-xs bg-transparent border-none p-0 cursor-pointer">SİL</button>
+                                    </form>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
