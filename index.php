@@ -2,6 +2,9 @@
 require 'db.php';
 girisKontrol();
 
+// CSP Nonce Kontrolü (Garanti olsun diye)
+$cspNonce = $cspNonce ?? '';
+
 // --- VERİ HAZIRLIĞI (RAPORLAMA İÇİN ORTAK MANTIK) ---
 $joinSQL = "LEFT JOIN cabinets c ON p.cabinet_id = c.id 
             LEFT JOIN rooms r ON c.room_id = r.id 
@@ -15,8 +18,7 @@ if (isset($_SESSION['aktif_sehir_id'])) {
     $params[] = $_SESSION['aktif_sehir_id'];
 }
 
-// 1. TÜM ÜRÜNLERİ ÇEK (Tek sorgu ile hem ekrana hem PDF raporuna veri sağlayalım)
-// Bu sorgu rapor.php ile aynı mantıkta çalışır.
+// 1. TÜM ÜRÜNLERİ ÇEK
 $sql = "SELECT p.*, l.name as loc_name, r.name as room_name, c.name as cab_name 
         FROM products p $joinSQL $whereSQL 
         ORDER BY (p.expiry_date IS NULL), p.expiry_date ASC";
@@ -25,15 +27,15 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $tumUrunler = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// 2. İSTATİSTİKLERİ HESAPLA (Dashboard ve Rapor İçin)
+// 2. İSTATİSTİKLERİ HESAPLA
 $toplamUrun = count($tumUrunler);
 $bugun = time();
 $riskStats = ['expired' => 0, 'critical' => 0, 'warning' => 0, 'safe' => 0];
 $catStats = [];
 $yasGruplari = ['0-30 Gün' => 0, '1-3 Ay' => 0, '3-6 Ay' => 0, '> 6 Ay' => 0];
 
-$kritikUrunSayisi = 0; // Dashboard kartı için (3 ay altı genel risk)
-$yaklasanlar = []; // Dashboard listesi için (İlk 10)
+$kritikUrunSayisi = 0; 
+$yaklasanlar = []; 
 
 foreach ($tumUrunler as $urun) {
     // A. Risk Analizi
@@ -48,10 +50,8 @@ foreach ($tumUrunler as $urun) {
         elseif ($kalanGun <= 30) $riskStats['warning']++;
         else $riskStats['safe']++;
 
-        // Dashboard için "Kritik" tanımı (Örn: 90 gün altı)
         if ($kalanGun <= 90) {
             $kritikUrunSayisi++;
-            // Yaklaşanlar listesine ekle (Sadece riskli olanlar)
             if (count($yaklasanlar) < 10) {
                 $yaklasanlar[] = $urun;
             }
@@ -74,8 +74,7 @@ foreach ($tumUrunler as $urun) {
     }
 }
 
-// 3. ODA VE DOLAP VERİLERİ (Grafikler İçin - Ayrı Sorgu Gerekli)
-// Şehir filtresi varsa onu kullanalım
+// 3. ODA VE DOLAP VERİLERİ (Grafikler İçin)
 $filterPart = isset($_SESSION['aktif_sehir_id']) ? "AND l.city_id = ?" : "";
 $filterParams = isset($_SESSION['aktif_sehir_id']) ? [$_SESSION['aktif_sehir_id']] : [];
 
@@ -217,16 +216,14 @@ require 'header.php';
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
 
-<script>
+<script nonce="<?= $cspNonce ?>">
 const catData = <?= json_encode($catStats) ?>;
 const ageData = <?= json_encode($yasGruplari) ?>;
 const odaData = <?= json_encode($odaVerileri) ?>;
 const dolapData = <?= json_encode($dolapVerileri) ?>;
 
-// PDF Verileri (PHP'den Gelen Tam Liste)
+// PDF Verileri
 const pdfData = <?= json_encode($tumUrunler) ?>;
-
-// PDF İstatistikleri
 const stats = {
     total: <?= $toplamUrun ?>,
     risk: <?= json_encode($riskStats) ?>
@@ -259,7 +256,7 @@ new Chart(document.getElementById('dolapChart').getContext('2d'), {
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
 });
 
-// Gelişmiş PDF Oluşturucu (rapor.php ile aynı kalite)
+// PDF Fonksiyonu
 function tr(str) {
     if(!str) return "";
     str = String(str);
@@ -286,7 +283,7 @@ function generatePDF() {
 
     let yPos = 50;
 
-    // 1. RİSK ANALİZİ GRAFİĞİ
+    // RİSK ANALİZİ GRAFİĞİ
     doc.setFontSize(14); 
     doc.setTextColor(0);
     doc.text(tr("1. Risk Analizi"), 14, yPos);
@@ -313,7 +310,7 @@ function generatePDF() {
     doc.setTextColor(80);
     doc.text(tr(`Geçmiş: ${stats.risk.expired} | Kritik: ${stats.risk.critical} | Yaklaşan: ${stats.risk.warning} | Güvenli: ${stats.risk.safe}`), 14, yPos);
 
-    // 2. ÜRÜN LİSTESİ
+    // ÜRÜN LİSTESİ
     let finalY = yPos + 15;
     doc.setFontSize(14); 
     doc.setTextColor(0);
