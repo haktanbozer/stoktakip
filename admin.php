@@ -8,7 +8,7 @@ if ($_SESSION['role'] !== 'ADMIN') {
 
 $mesaj = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    // CSRF Koruması
     csrfKontrol($_POST['csrf_token'] ?? '');
 
     // Kullanıcı Ekle
@@ -23,6 +23,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $stmt = $pdo->prepare("INSERT INTO users (id, username, email, password, role) VALUES (?, ?, ?, ?, ?)");
             $stmt->execute([$id, $username, $email, $hashed_password, $role]);
+            
+            // Audit Log
+            if(function_exists('auditLog')) auditLog('EKLEME', "Yeni kullanıcı eklendi: $username ($role)");
+            
             $mesaj = "✅ Kullanıcı oluşturuldu.";
         } catch (PDOException $e) { $mesaj = "❌ Hata: " . $e->getMessage(); }
     }
@@ -31,8 +35,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($_POST['sil_id'] == $_SESSION['user_id']) {
             $mesaj = "⚠️ Kendinizi silemezsiniz!";
         } else {
+            // Silinecek kullanıcı adını al (Log için)
+            $stmtName = $pdo->prepare("SELECT username FROM users WHERE id = ?");
+            $stmtName->execute([$_POST['sil_id']]);
+            $delUser = $stmtName->fetchColumn();
+
             $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
             $stmt->execute([$_POST['sil_id']]);
+            
+            // Audit Log
+            if(function_exists('auditLog')) auditLog('SİLME', "Kullanıcı silindi: $delUser");
+
             $mesaj = "🗑️ Kullanıcı silindi.";
         }
     }
@@ -117,7 +130,7 @@ require 'header.php';
                         </td>
                         <td class="p-3 text-right">
                             <?php if($k['id'] !== $_SESSION['user_id']): ?>
-                            <form method="POST" onsubmit="return confirm('Silinsin mi?')" class="inline">
+                            <form method="POST" onsubmit="confirmDelete(event)" class="inline">
                                 <?php echo csrfAlaniniEkle(); ?>
                                 <input type="hidden" name="sil_id" value="<?= $k['id'] ?>">
                                 <button type="submit" class="text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 font-medium transition">Sil</button>
@@ -131,8 +144,31 @@ require 'header.php';
                 </tbody>
             </table>
         </div>
-
     </div>
 </div>
+
+<script>
+function confirmDelete(event) {
+    event.preventDefault();
+    const form = event.target;
+    
+    Swal.fire({
+        title: 'Kullanıcıyı Sil?',
+        text: "Bu işlem geri alınamaz ve kullanıcının verilerini etkileyebilir.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        cancelButtonColor: '#94a3b8',
+        confirmButtonText: 'Evet, Sil',
+        cancelButtonText: 'İptal',
+        background: document.documentElement.classList.contains('dark') ? '#1e293b' : '#fff',
+        color: document.documentElement.classList.contains('dark') ? '#fff' : '#0f172a'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            form.submit();
+        }
+    });
+}
+</script>
 </body>
 </html>
