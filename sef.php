@@ -3,40 +3,39 @@ require 'db.php';
 girisKontrol();
 
 // --- AYARLAR ---
-// Güvenlik Uyarısı: API Anahtarı sabitlenmemeli (Hardcoded), ortam değişkenlerinden okunmalıdır!
-$apiKey = 'api'; 
+// GÜVENLİK GÜNCELLEMESİ: API Anahtarı artık .env dosyasından okunuyor
+$apiKey = getenv('GEMINI_API_KEY'); 
 $mesaj = '';
 $tarif = '';
 
-// YENİ EKLENEN: İzin verilen GIDA kategorileri listesi (Kullanıcının belirlediği liste)
+// ... (Kodun geri kalanı aynı şekilde devam eder) ...
+// YENİ EKLENEN: İzin verilen GIDA kategorileri listesi
 $izinVerilenGidaKategorileri = ['Gıda', 'Bakliyat', 'Süt Ürünleri', 'İçecek', 'Atıştırmalık', 'Baharat', 'Pirinç', 'Bulgur', 'Un', 'Makarna', 'Tatlı', 'Ayçiçek Yağı', 'Zeytinyağı', 'Sirke', 'Zeytin', 'Peynir', 'Şarküteri', 'Et', 'Balık', 'Tavuk', 'Dondurma', 'Sos', 'Tereyağı', 'Hazır Çorba', 'Kuruyemiş']; 
 $kategoriKosulu = "'" . implode("','", $izinVerilenGidaKategorileri) . "'"; 
 
-// Malzemeleri Çek (GIDA kategorisi + sub_category + SKT kontrolü)
+// Malzemeleri Çek
 $sql = "SELECT 
             p.name, 
             p.quantity, 
             p.unit, 
             p.category,
-            p.sub_category, /* <<< YENİ: Alt Kategori Alınıyor */
+            p.sub_category,
             p.expiry_date
         FROM products p 
         WHERE p.quantity > 0 
           AND p.category IN ($kategoriKosulu) 
-          /* SKT'si ya 14 gün içinde dolmuş/dolacak olanları al, ya da SKT'si NULL olanları al (daha az acil) */
           AND (p.expiry_date <= DATE_ADD(CURRENT_DATE(), INTERVAL 14 DAY) OR p.expiry_date IS NULL)
         ORDER BY (p.expiry_date IS NULL), p.expiry_date ASC, p.name ASC 
-        LIMIT 30"; // Limiti 30'a çıkardık ki daha fazla ürünle düşünebilsin
+        LIMIT 30";
 
 $urunler = $pdo->query($sql)->fetchAll(); 
 
-// Malzeme Listesini Metne Çevir (Alt kategori ve SKT bilgisini prompt'a ekliyoruz)
+// ... (Geri kalan liste oluşturma ve API sorgusu kısımları aynı) ...
+// Malzeme Listesini Metne Çevir
 $malzemeListesi = [];
 $bugun = time();
 foreach ($urunler as $u) {
     $ekBilgi = "";
-    
-    // SKT Kontrolü
     if ($u['expiry_date']) {
         $skt = strtotime($u['expiry_date']);
         $kalanGun = ceil(($skt - $bugun) / (60 * 60 * 24));
@@ -46,23 +45,21 @@ foreach ($urunler as $u) {
             $ekBilgi = "({$kalanGun} GÜN KALDI)";
         }
     }
-
     $malzemeListesi[] = "{$u['name']} (Alt Kategori: {$u['sub_category']}) ({$u['quantity']} {$u['unit']}) {$ekBilgi}";
 }
 $malzemeMetni = implode('; ', $malzemeListesi);
 
-// --- YAPAY ZEKA SORGUSU ---
+// YAPAY ZEKA SORGUSU
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['oner'])) {
     
-    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
     csrfKontrol($_POST['csrf_token'] ?? '');
     
     if (empty($apiKey)) {
-        $mesaj = "⚠️ API anahtarı eksik.";
+        $mesaj = "⚠️ API anahtarı yapılandırılmamış (.env dosyası eksik veya boş).";
     } elseif (empty($malzemeMetni)) {
         $mesaj = "⚠️ Menü önerisi için stokta yeterli gıda malzemesi bulunmuyor.";
     } else {
-        // PROMPT GÜNCELLEMESİ: SKT'si yakın olanlara öncelik vermesi için talimat ekleniyor.
+        // ... (Prompt ve cURL işlemleri aynı) ...
         $prompt = "Sen dünyaca ünlü, yaratıcı ve pratik bir Türk şefisin. Elimde şu malzemeler var: [$malzemeMetni]. 
         LÜTFEN ÖZELLİKLE '(ÇOK ACİL/GEÇMİŞ)' veya '(XX GÜN KALDI)' etiketi olan malzemeleri öncelikli olarak kullanmaya çalış. 
         Bu malzemelerin çoğunu (hepsini kullanmak zorunda değilsin) kullanarak yapabileceğim lezzetli bir yemek tarifi öner. 
@@ -86,7 +83,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['oner'])) {
             ]
         ];
 
-        // cURL ile İstek At
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
         curl_setopt($ch, CURLOPT_POST, 1);
