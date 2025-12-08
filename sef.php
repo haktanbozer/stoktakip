@@ -3,6 +3,7 @@ require 'db.php';
 girisKontrol();
 
 // --- AYARLAR ---
+// Güvenlik Uyarısı: API Anahtarı sabitlenmemeli (Hardcoded), ortam değişkenlerinden okunmalıdır!
 $apiKey = 'api'; 
 $mesaj = '';
 $tarif = '';
@@ -52,6 +53,9 @@ $malzemeMetni = implode('; ', $malzemeListesi);
 
 // --- YAPAY ZEKA SORGUSU ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['oner'])) {
+    
+    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
     
     if (empty($apiKey)) {
         $mesaj = "⚠️ API anahtarı eksik.";
@@ -160,6 +164,7 @@ require 'header.php';
                 </div>
                 
                 <form method="POST">
+                    <?php echo csrfAlaniniEkle(); ?>
                     <button type="submit" name="oner" <?= empty($urunler) ? 'disabled' : '' ?> class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white py-3 rounded-lg font-bold shadow-lg shadow-indigo-500/30 transition transform hover:scale-105 flex justify-center items-center gap-2 disabled:bg-gray-500 disabled:shadow-none disabled:transform-none">
                         ✨ Bana Yemek Öner
                     </button>
