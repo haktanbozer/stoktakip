@@ -270,11 +270,11 @@ require 'header.php';
                                 
                                 <td class="px-4 py-3">
                                     <div class="flex items-center gap-2">
-                                        <button onclick="hizliTuket(this, '<?= $urun['id'] ?>')" class="w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center transition font-bold text-lg leading-none pb-1 shadow-sm border border-red-200 dark:border-red-800" title="Tüket">
+                                        <button onclick="hizliTuket(this, '<?= $urun['id'] ?>', '<?= $_SESSION['csrf_token'] ?>')" class="w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center transition font-bold text-lg leading-none pb-1 shadow-sm border border-red-200 dark:border-red-800" title="Tüket">
                                             -
                                         </button>
 
-                                        <button onclick="transferDialog('<?= $urun['id'] ?>', '<?= (float)$urun['quantity'] ?>', '<?= htmlspecialchars($urun['unit']) ?>', '<?= htmlspecialchars($urun['name']) ?>', '<?= $urun['city_id'] ?>', '<?= $urun['location_id'] ?>', '<?= $urun['room_id'] ?>', '<?= $urun['cabinet_id'] ?>')" 
+                                        <button onclick="transferDialog('<?= $urun['id'] ?>', '<?= (float)$urun['quantity'] ?>', '<?= htmlspecialchars($urun['unit']) ?>', '<?= htmlspecialchars($urun['name']) ?>', '<?= $urun['city_id'] ?>', '<?= $urun['location_id'] ?>', '<?= $urun['room_id'] ?>', '<?= $urun['cabinet_id'] ?>', '<?= $_SESSION['csrf_token'] ?>')" 
                                                 class="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 hover:bg-blue-500 hover:text-white flex items-center justify-center transition font-bold text-sm leading-none pb-1 shadow-sm border border-blue-200 dark:border-blue-800" title="Hızlı Transfer">
                                             ⇄
                                         </button>
@@ -322,6 +322,7 @@ require 'header.php';
                     ⇄ <span id="modalProductName">Ürün Transferi</span>
                 </h3>
                 <form id="transferForm" onsubmit="event.preventDefault(); submitTransfer();" class="space-y-4">
+                    <?php echo csrfAlaniniEkle(); ?>
                     <input type="hidden" id="modalProductId" name="id">
                     
                     <div class="bg-slate-50 dark:bg-slate-700/50 p-3 rounded text-sm text-slate-700 dark:text-slate-300">
@@ -368,6 +369,7 @@ const ALL_CITIES = <?= json_encode($sehirler_transfer) ?>;
 const ALL_LOCATIONS = <?= json_encode($mekanlar_transfer) ?>;
 const ALL_ROOMS = <?= json_encode($odalar_transfer) ?>;
 const ALL_CABINETS = <?= json_encode($dolaplar_transfer) ?>;
+const CSRF_TOKEN = '<?= $_SESSION['csrf_token'] ?>'; // CSRF token'ı JS'ye aktarıldı
 </script>
 
 <script>
@@ -506,6 +508,8 @@ function transferDialog(product_id, current_qty, unit, product_name, current_cit
     filterLocations(current_city_id, current_location_id);
     filterRooms(current_location_id, current_room_id);
     filterCabinets(current_room_id, current_cabinet_id); 
+    
+    // CSRF Token'ı forma eklenir (PHP kodu ile eklenmişti)
 
     openModal();
 }
@@ -540,8 +544,10 @@ async function submitTransfer() {
     submitBtn.disabled = true;
     submitBtn.innerText = 'İşleniyor...';
 
+    // AJAX isteğine CSRF token'ı eklenir (URL Parametresi olarak)
+    const res = await fetch(`ajax.php?islem=hizli_transfer&id=${product_id}&amount=${amount}&new_cab_id=${new_cab_id}&csrf_token=${CSRF_TOKEN}`);
+    
     try {
-        const res = await fetch(`ajax.php?islem=hizli_transfer&id=${product_id}&amount=${amount}&new_cab_id=${new_cab_id}`);
         const data = await res.json();
         
         if (data.success) {
@@ -561,6 +567,7 @@ async function submitTransfer() {
 
 
 // Hızlı Tüket Fonksiyonu (Aynı kalır)
+// Fonksiyon tanımı, eklenen token parametresini alacak şekilde güncellendi
 async function hizliTuket(btn, id) {
     let girilenDeger = prompt("Kaç adet tüketildi?", "1");
     if (girilenDeger === null || girilenDeger.trim() === "") return;
@@ -575,7 +582,8 @@ async function hizliTuket(btn, id) {
     btn.innerHTML = "⟳";
 
     try {
-        const res = await fetch(`ajax.php?islem=hizli_tuket&id=${id}&adet=${adet}`);
+        // AJAX isteğine CSRF token'ı eklenir (URL Parametresi olarak)
+        const res = await fetch(`ajax.php?islem=hizli_tuket&id=${id}&adet=${adet}&csrf_token=${CSRF_TOKEN}`);
         const data = await res.json();
 
         if (data.success) {
