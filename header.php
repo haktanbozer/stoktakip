@@ -159,12 +159,17 @@ if (session_status() === PHP_SESSION_NONE) {
                 <svg id="theme-toggle-dark-icon" class="hidden w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path></svg>
             </button>
             
-            <div class="hidden md:flex flex-col items-end">
-                <span class="text-slate-300 capitalize text-xs font-bold"><?= htmlspecialchars($_SESSION['username'] ?? 'User') ?></span>
-            </div>
-            
-            <a href="cikis.php" class="text-red-400 hover:text-red-300 transition bg-red-400/10 px-2 py-1 rounded ml-2 whitespace-nowrap">Çıkış</a>
-        </div>
+           <div class="hidden md:flex items-center gap-3 border-l border-slate-700 pl-4 ml-2">
+    <a href="profil.php" class="flex flex-col items-end group">
+        <span class="text-slate-300 group-hover:text-white transition capitalize text-xs font-bold"><?= htmlspecialchars($_SESSION['username'] ?? 'User') ?></span>
+        <span class="text-[10px] text-slate-500 group-hover:text-blue-400 transition">Profili Düzenle</span>
+    </a>
+    
+    <a href="cikis.php" class="text-red-400 hover:text-white hover:bg-red-500 transition bg-red-500/10 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1" title="Güvenli Çıkış">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Çıkış
+    </a>
+</div>
     </div>
 </nav>
 
