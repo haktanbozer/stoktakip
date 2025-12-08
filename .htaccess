@@ -1,5 +1,15 @@
 # ----------------------------------------------------------------------
-# 1. TEMEL GÜVENLİK VE GİZLİLİK
+# 1. HTTPS YÖNLENDİRMESİ (EN ÜSTTE OLMALI - PUAN İÇİN KRİTİK)
+# ----------------------------------------------------------------------
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # Eğer HTTPS değilse, hemen HTTPS'e yönlendir (301 Kalıcı Yönlendirme)
+    RewriteCond %{HTTPS} off
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# ----------------------------------------------------------------------
+# 2. TEMEL GÜVENLİK VE GİZLİLİK
 # ----------------------------------------------------------------------
 
 # Dizin listelemeyi kapat (Klasör içeriği görünmesin)
@@ -12,60 +22,50 @@ Options -Indexes
 </FilesMatch>
 
 # Log ve Session klasörlerini koru
-RewriteEngine On
 RewriteRule ^logs/ - [F,L]
 RewriteRule ^sessions/ - [F,L]
 
 # ----------------------------------------------------------------------
-# 2. HTTP GÜVENLİK BAŞLIKLARI (MOZILLA OBSERVATORY İÇİN KRİTİK)
+# 3. HTTP GÜVENLİK BAŞLIKLARI (CSP GÜNCELLENDİ)
 # ----------------------------------------------------------------------
 
 <IfModule mod_headers.c>
-    # 1. HSTS (Strict-Transport-Security)
-    # Tarayıcıyı 1 yıl boyunca sadece HTTPS kullanmaya zorlar. (Puanı en çok bu artırır)
-    # DİKKAT: Sitenizde SSL (https) kurulu değilse bu satırı silin!
+    # HSTS: Tarayıcıyı 1 yıl boyunca HTTPS kullanmaya zorla
     Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 
-    # 2. X-Content-Type-Options
-    # Tarayıcının dosya türlerini tahmin etmesini (MIME-sniffing) engeller.
+    # MIME Sniffing Koruması
     Header always set X-Content-Type-Options "nosniff"
 
-    # 3. X-Frame-Options (Clickjacking Koruması)
-    # Sitenizin başka sitelerde iframe içinde açılmasını engeller.
+    # Clickjacking Koruması
     Header always set X-Frame-Options "SAMEORIGIN"
 
-    # 4. Referrer-Policy
-    # Başka bir siteye link verildiğinde, tarayıcının ne kadar bilgi göndereceğini belirler.
+    # Referrer Policy
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
 
-    # 5. Content-Security-Policy (CSP) - En Güçlü Katman
-    # Sitenizin hangi kaynaklardan (resim, script, stil) veri yükleyebileceğini kısıtlar.
-    # 'unsafe-inline' kullanımı mecburen açık bırakıldı çünkü satır içi JS/CSS kullanıyoruz.
-    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.datatables.net https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.datatables.net; img-src 'self' data:; font-src 'self'; connect-src 'self' https://generativelanguage.googleapis.com; frame-ancestors 'self';"
+    # --- CSP (Content Security Policy) - SIKILAŞTIRILMIŞ ---
+    # base-uri 'self': Base tag manipülasyonunu önler.
+    # object-src 'none': Flash vb. eklentileri tamamen kapatır.
+    # script-src: Sadece güvenli CDN'lere ve kendi sitenize izin verir.
+    
+    Header always set Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.datatables.net https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.datatables.net https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self' https://generativelanguage.googleapis.com; font-src 'self' https://cdnjs.cloudflare.com; frame-ancestors 'self';"
 
-    # 6. Permissions-Policy (Gereksiz donanım erişimlerini kapatır)
+    # Gereksiz İzinleri Kapat
     Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
     
-    # 7. Arama Motorlarını Engelle (Yönetim Paneli Olduğu İçin)
+    # Arama Motorlarını Engelle
     Header set X-Robots-Tag "noindex, nofollow"
 </IfModule>
 
 # ----------------------------------------------------------------------
-# 3. PERFORMANS OPTİMİZASYONU (Hızlandırma)
+# 4. PERFORMANS OPTİMİZASYONU
 # ----------------------------------------------------------------------
 
 # Gzip Sıkıştırma
 <IfModule mod_deflate.c>
-    AddOutputFilterByType DEFLATE text/plain
-    AddOutputFilterByType DEFLATE text/html
-    AddOutputFilterByType DEFLATE text/xml
-    AddOutputFilterByType DEFLATE text/css
-    AddOutputFilterByType DEFLATE application/xml
-    AddOutputFilterByType DEFLATE application/javascript
-    AddOutputFilterByType DEFLATE application/json
+    AddOutputFilterByType DEFLATE text/plain text/html text/xml text/css application/xml application/javascript application/json
 </IfModule>
 
-# Tarayıcı Önbellekleme (Browser Caching)
+# Tarayıcı Önbellekleme
 <IfModule mod_expires.c>
     ExpiresActive On
     ExpiresDefault "access plus 1 month"
@@ -76,12 +76,4 @@ RewriteRule ^sessions/ - [F,L]
     ExpiresByType image/png "access plus 1 year"
     ExpiresByType image/svg+xml "access plus 1 year"
     ExpiresByType text/html "access plus 0 seconds"
-</IfModule>
-
-# ----------------------------------------------------------------------
-# 4. HTTPS YÖNLENDİRMESİ (ZORUNLU)
-# ----------------------------------------------------------------------
-<IfModule mod_rewrite.c>
-    RewriteCond %{HTTPS} off
-    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 </IfModule>
