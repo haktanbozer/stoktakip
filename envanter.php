@@ -36,7 +36,7 @@ if (isset($_SESSION['aktif_sehir_id'])) {
     $params[] = $_SESSION['aktif_sehir_id'];
 }
 
-// 3. DETAYLI FİLTRELER (Sizin Orijinal Filtreleriniz)
+// 3. DETAYLI FİLTRELER (Orijinal Yapı Korundu)
 if (!empty($_GET['filter_location_id'])) {
     $sql .= " AND l.id = ?";
     $params[] = $_GET['filter_location_id'];
@@ -85,10 +85,10 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $tumUrunler = $stmt->fetchAll();
 
-// Filtre Seçenekleri İçin Veriler
+// Filtre Seçenekleri
 $kategoriler = $pdo->query("SELECT DISTINCT category FROM products")->fetchAll(PDO::FETCH_COLUMN);
 
-// Transfer Modalı İçin Konum Verileri
+// Transfer Modalı Verileri
 $cityFilterCondition = isset($_SESSION['aktif_sehir_id']) ? "AND l.city_id = '" . $_SESSION['aktif_sehir_id'] . "'" : "";
 $sehirler_transfer = $pdo->query("SELECT id, name FROM cities ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 $mekanlar_transfer = $pdo->query("SELECT l.id, l.name, l.city_id FROM locations l LEFT JOIN cities c ON l.city_id = c.id WHERE 1=1 $cityFilterCondition ORDER BY l.name ASC")->fetchAll(PDO::FETCH_ASSOC);
@@ -115,7 +115,7 @@ require 'header.php';
     <form method="GET" class="grid grid-cols-1 md:grid-cols-5 gap-4">
         
         <div class="md:col-span-5">
-            <input type="text" name="q" value="<?= htmlspecialchars($_GET['q'] ?? '') ?>" placeholder="Ürün adı, marka ara..." class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white">
+            <input type="text" name="q" value="<?= htmlspecialchars($_GET['q'] ?? '') ?>" placeholder="Sunucu taraflı arama (Ürün adı, marka)..." class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white">
         </div>
         
         <div>
@@ -145,7 +145,6 @@ require 'header.php';
                 <?php 
                 $current_location_id = $_GET['filter_location_id'] ?? null;
                 $filtered_rooms = $current_location_id ? array_filter($odalar_transfer, fn($r) => $r['location_id'] == $current_location_id) : $odalar_transfer;
-                
                 foreach($filtered_rooms as $o): 
                 ?>
                     <option value="<?= $o['id'] ?>" <?= (isset($_GET['filter_room_id']) && $_GET['filter_room_id'] == $o['id']) ? 'selected' : '' ?>><?= $o['name'] ?></option>
@@ -160,7 +159,6 @@ require 'header.php';
                 <?php 
                 $current_room_id = $_GET['filter_room_id'] ?? null;
                 $filtered_cabinets = $current_room_id ? array_filter($dolaplar_transfer, fn($c) => $c['room_id'] == $current_room_id) : $dolaplar_transfer;
-                
                 foreach($filtered_cabinets as $c): 
                 ?>
                     <option value="<?= $c['id'] ?>" <?= (isset($_GET['filter_cabinet_id']) && $_GET['filter_cabinet_id'] == $c['id']) ? 'selected' : '' ?>><?= $c['name'] ?></option>
@@ -169,7 +167,7 @@ require 'header.php';
         </div>
 
         <div class="flex items-end">
-            <button type="submit" class="bg-slate-800 dark:bg-slate-600 text-white px-6 py-2 rounded hover:bg-slate-700 dark:hover:bg-slate-500 text-sm font-bold w-full">Filtrele</button>
+            <button type="submit" class="bg-slate-800 dark:bg-slate-600 text-white px-6 py-2 rounded hover:bg-slate-700 dark:hover:bg-slate-500 text-sm font-bold w-full transition">Filtrele</button>
         </div>
     </form>
 </div>
@@ -189,7 +187,7 @@ require 'header.php';
             <?php 
             $bugun = time();
             foreach($tumUrunler as $urun): 
-                // Durum Hesaplama (Eski gruplama mantığı burada satır bazlı uygulanıyor)
+                // Durum ve Renk Hesaplama
                 $durumEtiketi = "";
                 $satirClass = "";
                 $sktSortValue = "9999999999"; 
@@ -347,10 +345,10 @@ $(document).ready(function() {
     $('#urunTablosu').DataTable({
         "language": { "url": "//cdn.datatables.net/plug-ins/1.13.6/i18n/tr.json" },
         "pageLength": 25,
-        "order": [[ 4, "asc" ]], // Varsayılan: SKT'ye göre sırala
+        "order": [[ 4, "asc" ]], // Varsayılan: SKT'ye göre sırala (Sütun indeksi 4)
         "responsive": true,
         "columnDefs": [
-            { "orderable": false, "targets": 5 } // İşlem sütununu sıralama dışı bırak
+            { "orderable": false, "targets": 5 } // İşlem sütunu sıralama dışı
         ]
     });
 });
@@ -407,7 +405,6 @@ async function hizliTuket(btn, id) {
             const miktarSpan = document.getElementById(`qty_${id}`);
             miktarSpan.innerText = `${parseFloat(data.yeni_miktar)} ${data.birim}`;
             
-            // Başarılı Toast
             Swal.fire({
                 toast: true, position: 'top-end', showConfirmButton: false, timer: 3000,
                 icon: 'success', title: 'Stok güncellendi',
@@ -516,7 +513,7 @@ function populateSelect(id, data, val) {
     else if(id=='targetLocation' && val) filterRooms(val, document.getElementById('targetRoom').value);
     else if(id=='targetRoom' && val) filterCabinets(val, document.getElementById('targetCabinet').value);
 }
-// Üst Filtreleme İçin Fonksiyonlar (Sizin Yazdıklarınız)
+// Üst Filtreleme İçin Fonksiyonlar
 function filterRoomsForFilter(locationId) {
     const roomSelect = document.getElementById('filter_room'); roomSelect.innerHTML = '<option value="">Tümü</option>';
     document.getElementById('filter_cabinet').innerHTML = '<option value="">Tümü</option>';
