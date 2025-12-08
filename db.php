@@ -24,17 +24,17 @@ function yukleEnv($yol) {
 // .env dosyasını yükle
 yukleEnv(__DIR__ . '/.env');
 
-// 2. GÜVENLİ OTURUM (SESSION) VE KLASÖR AYARLARI [GÜNCELLENDİ]
+// 2. Session ve Klasör Ayarları
 $session_folder = __DIR__ . '/sessions';
 if (!file_exists($session_folder)) { mkdir($session_folder, 0755, true); }
 session_save_path($session_folder);
 
-// Çerez Parametrelerini Güvenli Hale Getir (HttpOnly ve Secure - Mozilla Observatory Puanı İçin Kritik)
+// Çerez Parametrelerini Güvenli Hale Getir (HttpOnly ve Secure)
 session_set_cookie_params([
     'lifetime' => 0,            // Tarayıcı kapanınca silinsin
     'path' => '/',              // Tüm sitede geçerli
     'domain' => '',             // Mevcut domain (otomatik)
-    'secure' => true,           // Sadece HTTPS üzerinden gönder (SSL Yoksa false yapın!)
+    'secure' => true,           // Sadece HTTPS üzerinden gönder
     'httponly' => true,         // JavaScript ile erişilemez (XSS Koruması)
     'samesite' => 'Strict'      // CSRF koruması için
 ]);
@@ -66,7 +66,6 @@ function sistemLogla($mesaj, $seviye = 'ERROR') {
 
 // --- GLOBAL HATA YAKALAYICILAR ---
 
-// 1. Uyarılar ve Noticeler için
 set_error_handler(function($errno, $errstr, $errfile, $errline) {
     if (!(error_reporting() & $errno)) {
         return;
@@ -79,10 +78,9 @@ set_error_handler(function($errno, $errstr, $errfile, $errline) {
     $mesaj = "$errstr | Dosya: $errfile | Satır: $errline";
     sistemLogla($mesaj, $seviye);
     
-    return false; // Standart PHP işlemine devam et
+    return false; 
 });
 
-// 2. Yakalanmamış İstisnalar için
 set_exception_handler(function($e) {
     $mesaj = "Yakalanmamış İstisna: " . $e->getMessage() . " | Dosya: " . $e->getFile() . " | Satır: " . $e->getLine();
     sistemLogla($mesaj, 'CRITICAL');
@@ -96,7 +94,6 @@ set_exception_handler(function($e) {
     echo "Sistemde teknik bir sorun oluştu.";
 });
 
-// 3. Kritik Hatalar (Fatal Errors) için
 register_shutdown_function(function() {
     $error = error_get_last();
     if ($error !== NULL && in_array($error['type'], [E_ERROR, E_CORE_ERROR, E_COMPILE_ERROR, E_RECOVERABLE_ERROR])) {
@@ -128,7 +125,7 @@ function auditLog($islem, $detay) {
     }
 }
 
-// 3. Veritabanı Bağlantısı (.env'den okuyor)
+// 3. Veritabanı Bağlantısı
 $host = getenv('DB_HOST');
 $db   = getenv('DB_NAME');
 $user = getenv('DB_USER');
@@ -179,7 +176,6 @@ function girisKontrol() {
 }
 
 function csrfKontrol($token) {
-    // Süre dolmuşsa bile hata verir, çünkü token yenilenmiştir ama formdaki eskidir.
     if (!isset($_SESSION['csrf_token']) || $token !== $_SESSION['csrf_token']) {
         sistemLogla("CSRF Hatası (Token uyuşmazlığı veya zaman aşımı): IP: " . ($_SERVER['REMOTE_ADDR'] ?? 'Bilinmiyor'), 'SECURITY');
         http_response_code(403);
@@ -218,5 +214,38 @@ if(isset($_SESSION['user_id'])) {
     } catch(Exception $e) {
         sistemLogla("Bildirim Güncelleme Hatası: " . $e->getMessage(), 'WARNING');
     }
+}
+
+// --- GÜVENLİK: CSP NONCE OLUŞTURMA (YENİ EKLENDİ) ---
+// Her istekte rastgele bir kod üretir.
+if (!isset($cspNonce)) {
+    try {
+        $cspNonce = bin2hex(random_bytes(16));
+    } catch (Exception $e) {
+        $cspNonce = bin2hex(openssl_random_pseudo_bytes(16));
+    }
+}
+
+// --- GÜVENLİK BAŞLIKLARI (PHP Üzerinden Gönderiliyor) ---
+// .htaccess içindeki CSP satırını sildiyseniz burası devreye girer.
+
+if (!headers_sent()) {
+    header("X-Frame-Options: SAMEORIGIN");
+    header("X-Content-Type-Options: nosniff");
+    header("Referrer-Policy: strict-origin-when-cross-origin");
+    header("Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()");
+
+    // Content-Security-Policy (Nonce Destekli)
+    $cspHeader = "default-src 'self'; " .
+                 "base-uri 'self'; " .
+                 "object-src 'none'; " . 
+                 "form-action 'self'; " . 
+                 "script-src 'self' 'unsafe-eval' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.datatables.net https://cdn.jsdelivr.net https://cdnjs.cloudflare.com 'nonce-{$cspNonce}'; " .
+                 "style-src 'self' 'unsafe-inline' https://cdn.datatables.net https://cdn.jsdelivr.net; " .
+                 "img-src 'self' data:; " .
+                 "font-src 'self' https://cdnjs.cloudflare.com; " .
+                 "connect-src 'self' https://generativelanguage.googleapis.com;";
+
+    header("Content-Security-Policy: " . $cspHeader);
 }
 ?>
