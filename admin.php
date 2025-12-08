@@ -8,6 +8,9 @@ if ($_SESSION['role'] !== 'ADMIN') {
 
 $mesaj = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
+    csrfKontrol($_POST['csrf_token'] ?? '');
+
     // Kullanıcı Ekle
     if (isset($_POST['kullanici_ekle'])) {
         $username = $_POST['username'];
@@ -57,6 +60,7 @@ require 'header.php';
             <h3 class="font-bold text-lg text-slate-800 dark:text-white mb-4 border-b dark:border-slate-700 pb-2">Yeni Personel Ekle</h3>
             
             <form method="POST" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <?php echo csrfAlaniniEkle(); ?>
                 <input type="hidden" name="kullanici_ekle" value="1">
                 
                 <div>
@@ -114,6 +118,7 @@ require 'header.php';
                         <td class="p-3 text-right">
                             <?php if($k['id'] !== $_SESSION['user_id']): ?>
                             <form method="POST" onsubmit="return confirm('Silinsin mi?')" class="inline">
+                                <?php echo csrfAlaniniEkle(); ?>
                                 <input type="hidden" name="sil_id" value="<?= $k['id'] ?>">
                                 <button type="submit" class="text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 font-medium transition">Sil</button>
                             </form>
