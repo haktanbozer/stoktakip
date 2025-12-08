@@ -24,7 +24,7 @@ if (empty($_SESSION['csrf_token'])) {
     }
 }
 
-// --- LOGLAMA MEKANİZMASI ---
+// --- DOSYA LOGLAMA MEKANİZMASI (Sistem Hataları İçin) ---
 function sistemLogla($mesaj, $seviye = 'ERROR') {
     $logDizini = __DIR__ . '/logs';
     if (!file_exists($logDizini)) {
@@ -34,6 +34,28 @@ function sistemLogla($mesaj, $seviye = 'ERROR') {
     $logDosyasi = $logDizini . '/app_' . date('Y-m-d') . '.log';
     $logIcerigi = sprintf("[%s] [%s] %s%s", date('Y-m-d H:i:s'), $seviye, $mesaj, PHP_EOL);
     error_log($logIcerigi, 3, $logDosyasi);
+}
+
+// --- AUDIT LOG MEKANİZMASI (Kullanıcı İşlemleri İçin - YENİ) ---
+function auditLog($islem, $detay) {
+    global $pdo;
+    
+    // Kullanıcı giriş yapmamışsa loglama yapma (Login denemeleri hariç)
+    if (!isset($_SESSION['user_id'])) return;
+
+    try {
+        $stmt = $pdo->prepare("INSERT INTO audit_logs (user_id, username, action, details, ip_address) VALUES (?, ?, ?, ?, ?)");
+        $stmt->execute([
+            $_SESSION['user_id'],
+            $_SESSION['username'] ?? 'Bilinmiyor',
+            $islem, // Örn: 'SİLME', 'GÜNCELLEME'
+            $detay, // Örn: 'X ürünü silindi.'
+            $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'
+        ]);
+    } catch (Exception $e) {
+        // Audit log hatası sistemi durdurmasın, arka plan loguna yazsın
+        sistemLogla("Audit Log Yazma Hatası: " . $e->getMessage(), 'WARNING');
+    }
 }
 
 // 2. Veritabanı Bağlantı Bilgileri
@@ -63,7 +85,6 @@ try {
 }
 
 // 3. GÜNCELLENMİŞ GİRİŞ KONTROL FONKSİYONU
-// Bu güncelleme ile silinen kullanıcılar anında çıkışa zorlanır.
 function girisKontrol() {
     global $pdo;
 
@@ -86,7 +107,6 @@ function girisKontrol() {
             exit;
         }
     } catch (PDOException $e) {
-        // DB hatası olursa güvenlik gereği oturumu sonlandırabiliriz veya loglayıp geçebiliriz
         sistemLogla("Kullanıcı Doğrulama Hatası: " . $e->getMessage());
     }
 }
