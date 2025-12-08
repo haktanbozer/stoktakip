@@ -43,6 +43,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_POST['quantity'], $_POST['unit'], $_POST['cabinet_id'], $_POST['shelf_location'] ?? null, 
             $_POST['purchase_date'], $expiryDate, $id
         ]);
+
+        // ** AUDIT LOG: ÜRÜN GÜNCELLENDİ **
+        // Detaylı loglama (Hangi ürünün güncellendiği)
+        auditLog('GÜNCELLEME', "{$urun['name']} ({$urun['quantity']} {$urun['unit']}) ürününün bilgileri güncellendi. Yeni Adı: {$_POST['name']}, Yeni Miktarı: {$_POST['quantity']}");
+
         header("Location: envanter.php?durum=basarili"); exit;
     } catch (PDOException $e) { $error = "Hata: " . $e->getMessage(); }
 }
