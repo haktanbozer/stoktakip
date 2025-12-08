@@ -2,9 +2,8 @@
 require 'db.php';
 girisKontrol();
 
-// Silme
+// Silme İşlemi
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sil_urun_id'])) {
-    // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
     csrfKontrol($_POST['csrf_token'] ?? '');
 
     $stmt = $pdo->prepare("DELETE FROM products WHERE id = ?");
@@ -12,19 +11,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sil_urun_id'])) {
     header("Location: envanter.php?silindi=1");
     exit;
 }
-/* Orijinal GET silme bloğu kaldırıldı:
-if (isset($_GET['sil'])) {
-    $stmt = $pdo->prepare("DELETE FROM products WHERE id = ?");
-    $stmt->execute([$_GET['sil']]);
-    header("Location: envanter.php?silindi=1");
-    exit;
-}
-*/
 
 // --- FİLTRELEME & SORGULAMA ---
 $params = [];
 
-// 1. Temel Sorgu (Transfer için gerekli ID'ler eklendi)
+// 1. Temel Sorgu
 $sql = "SELECT 
             p.*, 
             l.name as loc_name, 
@@ -45,7 +36,7 @@ if (isset($_SESSION['aktif_sehir_id'])) {
     $params[] = $_SESSION['aktif_sehir_id'];
 }
 
-// --- YENİ KONUM FİLTRELERİ (PHP MANTIĞI) ---
+// 3. DETAYLI FİLTRELER (Sizin Orijinal Filtreleriniz)
 if (!empty($_GET['filter_location_id'])) {
     $sql .= " AND l.id = ?";
     $params[] = $_GET['filter_location_id'];
@@ -58,10 +49,6 @@ if (!empty($_GET['filter_cabinet_id'])) {
     $sql .= " AND c.id = ?";
     $params[] = $_GET['filter_cabinet_id'];
 }
-// --- YENİ KONUM FİLTRELERİ BİTİŞ ---
-
-
-// 3. Diğer Filtreler (Aynı kalır)
 if (!empty($_GET['q'])) {
     $sql .= " AND (p.name LIKE ? OR p.brand LIKE ?)";
     $term = "%" . $_GET['q'] . "%";
@@ -98,54 +85,15 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $tumUrunler = $stmt->fetchAll();
 
-// --- GRUPLAMA MANTIĞI (Aynı Kalır) ---
-$gruplar = [
-    'gecmis' => ['title' => '🚨 Süresi Geçmiş Ürünler', 'items' => [], 'color' => 'bg-red-50 dark:bg-red-900/40 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300'],
-    'kritik' => ['title' => '⚠️ Çok Yaklaşanlar (7 Gün)', 'items' => [], 'color' => 'bg-orange-50 dark:bg-orange-900/40 border-orange-200 dark:border-orange-800 text-orange-800 dark:text-orange-300'],
-    'yakindan' => ['title' => '📅 Bu Ay Tüketilmeli (30 Gün)', 'items' => [], 'color' => 'bg-yellow-50 dark:bg-yellow-900/40 border-yellow-200 dark:border-yellow-800 text-yellow-800 dark:text-yellow-300'],
-    'orta' => ['title' => '🗓️ Orta Vade (1-3 Ay)', 'items' => [], 'color' => 'bg-blue-50 dark:bg-blue-900/40 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'],
-    'uzun' => ['title' => '✅ Uzun Ömürlü (+3 Ay)', 'items' => [], 'color' => 'bg-green-50 dark:bg-green-900/40 border-green-200 dark:border-green-800 text-green-800 dark:text-green-300'],
-    'suresiz' => ['title' => '♾️ Süresiz / SKT Yok', 'items' => [], 'color' => 'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-800 dark:text-slate-300'],
-];
-
-$bugun = time();
-foreach ($tumUrunler as $urun) {
-    if (empty($urun['expiry_date'])) {
-        $gruplar['suresiz']['items'][] = $urun;
-    } else {
-        $skt = strtotime($urun['expiry_date']);
-        $farkGun = ceil(($skt - $bugun) / (60 * 60 * 24));
-        if ($farkGun < 0) $gruplar['gecmis']['items'][] = $urun;
-        elseif ($farkGun <= 7) $gruplar['kritik']['items'][] = $urun;
-        elseif ($farkGun <= 30) $gruplar['yakindan']['items'][] = $urun;
-        elseif ($farkGun <= 90) $gruplar['orta']['items'][] = $urun;
-        else $gruplar['uzun']['items'][] = $urun;
-    }
-}
-
+// Filtre Seçenekleri İçin Veriler
 $kategoriler = $pdo->query("SELECT DISTINCT category FROM products")->fetchAll(PDO::FETCH_COLUMN);
 
-// --- TRANSFER VE FİLTRE İÇİN TÜM KONUM VERİLERİNİ ÇEKME (Düzeltildi) ---
-
-// 1. Şehir Filtresi Durumuna göre WHERE koşulu oluşturulur.
+// Transfer Modalı İçin Konum Verileri
 $cityFilterCondition = isset($_SESSION['aktif_sehir_id']) ? "AND l.city_id = '" . $_SESSION['aktif_sehir_id'] . "'" : "";
-
-// 2. Şehirler (Filtresiz)
 $sehirler_transfer = $pdo->query("SELECT id, name FROM cities ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-
-// 3. Mekanlar (Locations)
-$mekanlar_transfer_sql = "SELECT l.id, l.name, l.city_id FROM locations l LEFT JOIN cities c ON l.city_id = c.id WHERE 1=1 $cityFilterCondition ORDER BY l.name ASC";
-$mekanlar_transfer = $pdo->query($mekanlar_transfer_sql)->fetchAll(PDO::FETCH_ASSOC);
-
-// 4. Odalar (Rooms) - r JOIN l yaparak l.city_id'ye erişim sağlanır.
-$odalar_transfer_sql = "SELECT r.id, r.name, r.location_id FROM rooms r JOIN locations l ON r.location_id = l.id WHERE 1=1 $cityFilterCondition ORDER BY r.name ASC";
-$odalar_transfer   = $pdo->query($odalar_transfer_sql)->fetchAll(PDO::FETCH_ASSOC);
-
-// 5. Dolaplar (Cabinets) - c JOIN r JOIN l yaparak l.city_id'ye erişim sağlanır.
-// Hata burada oluşuyordu, l.city_id'ye erişmek için JOIN yapısı tamamlandı.
-$dolaplar_transfer_sql = "SELECT c.id, c.name, c.room_id FROM cabinets c JOIN rooms r ON c.room_id = r.id JOIN locations l ON r.location_id = l.id WHERE 1=1 $cityFilterCondition ORDER BY c.name ASC";
-$dolaplar_transfer = $pdo->query($dolaplar_transfer_sql)->fetchAll(PDO::FETCH_ASSOC);
-
+$mekanlar_transfer = $pdo->query("SELECT l.id, l.name, l.city_id FROM locations l LEFT JOIN cities c ON l.city_id = c.id WHERE 1=1 $cityFilterCondition ORDER BY l.name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$odalar_transfer   = $pdo->query("SELECT r.id, r.name, r.location_id FROM rooms r JOIN locations l ON r.location_id = l.id WHERE 1=1 $cityFilterCondition ORDER BY r.name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$dolaplar_transfer = $pdo->query("SELECT c.id, c.name, c.room_id FROM cabinets c JOIN rooms r ON c.room_id = r.id JOIN locations l ON r.location_id = l.id WHERE 1=1 $cityFilterCondition ORDER BY c.name ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 require 'header.php';
 ?>
@@ -157,7 +105,8 @@ require 'header.php';
             <span class="text-sm font-normal text-slate-500 dark:text-slate-400 ml-2">(<?= htmlspecialchars($_SESSION['aktif_sehir_ad']) ?>)</span>
         <?php endif; ?>
     </h2>
-    <a href="urun-ekle.php" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2 no-underline">
+    <a href="urun-ekle.php" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2 no-underline shadow-lg shadow-blue-500/30">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
         + Yeni Ürün
     </a>
 </div>
@@ -166,7 +115,7 @@ require 'header.php';
     <form method="GET" class="grid grid-cols-1 md:grid-cols-5 gap-4">
         
         <div class="md:col-span-5">
-            <input type="text" name="q" value="<?= htmlspecialchars($_GET['q'] ?? '') ?>" placeholder="Ürün adı, marka ara..." class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 text-sm">
+            <input type="text" name="q" value="<?= htmlspecialchars($_GET['q'] ?? '') ?>" placeholder="Ürün adı, marka ara..." class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white">
         </div>
         
         <div>
@@ -225,113 +174,133 @@ require 'header.php';
     </form>
 </div>
 
-<div class="space-y-8">
-    <?php foreach($gruplar as $key => $grup): ?>
-        <?php if(!empty($grup['items'])): ?>
-            <div class="border dark:border-slate-700 rounded-xl overflow-hidden shadow-sm">
-                <div class="p-3 font-bold text-sm <?= $grup['color'] ?> flex justify-between items-center transition-colors">
-                    <span><?= $grup['title'] ?></span>
-                    <span class="bg-white/50 dark:bg-black/20 px-2 py-0.5 rounded text-xs"><?= count($grup['items']) ?> Ürün</span>
-                </div>
-                <div class="bg-white dark:bg-slate-800 overflow-x-auto transition-colors">
-                    <table class="w-full text-sm text-left text-slate-600 dark:text-slate-300">
-                        <thead class="text-xs text-slate-400 dark:text-slate-500 uppercase bg-slate-50 dark:bg-slate-700/50">
-                            <tr>
-                                <th class="px-4 py-2">Ürün</th>
-                                <th class="px-4 py-2">Konum</th> 
-                                <th class="px-4 py-2">Miktar</th>
-                                <th class="px-4 py-2">SKT</th>
-                                <th class="px-4 py-2 text-right">İşlem</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
-                            <?php foreach($grup['items'] as $urun): 
-                                if (!empty($urun['expiry_date'])) {
-                                    $kalan = ceil((strtotime($urun['expiry_date']) - time()) / (60*60*24));
-                                } else {
-                                    $kalan = null;
-                                }
-                            ?>
-                            <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                                <td class="px-4 py-3">
-                                    <div class="font-medium text-slate-800 dark:text-slate-200"><?= htmlspecialchars($urun['name']) ?></div>
-                                    <div class="text-xs text-slate-400"><?= htmlspecialchars($urun['brand']) ?></div>
-                                    <div class="text-[10px] text-blue-500 dark:text-blue-400 mt-1"><?= htmlspecialchars($urun['category']) ?> > <?= htmlspecialchars($urun['sub_category']) ?></div>
-                                </td>
-                                <td class="px-4 py-3 text-xs">
-                                    <div class="font-bold text-slate-700 dark:text-slate-300"><?= htmlspecialchars($urun['loc_name'] ?? '-') ?> &rsaquo; <?= htmlspecialchars($urun['room_name'] ?? '-') ?></div>
-                                    <div class="text-slate-500 dark:text-slate-400"><?= htmlspecialchars($urun['cab_name'] ?? '-') ?></div>
-                                    <?php if($urun['shelf_location']): ?>
-                                        <div class="bg-yellow-50 dark:bg-yellow-900/30 inline-block px-1 mt-1 border border-yellow-100 dark:border-yellow-800 text-[10px] rounded text-yellow-700 dark:text-yellow-400">
-                                            <?= htmlspecialchars($urun['shelf_location']) ?>
-                                        </div>
-                                    <?php endif; ?>
-                                </td>
-                                
-                                <td class="px-4 py-3">
-                                    <div class="flex items-center gap-2">
-                                        <button onclick="hizliTuket(this, '<?= $urun['id'] ?>', '<?= $_SESSION['csrf_token'] ?>')" class="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center transition font-bold text-xl leading-none pb-0 shadow-sm border border-red-200 dark:border-red-800" title="Tüket">
-                                            -
-                                        </button>
+<div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors p-2">
+    <table id="urunTablosu" class="w-full text-sm text-left text-slate-600 dark:text-slate-300">
+        <thead class="text-xs text-slate-400 dark:text-slate-500 uppercase bg-slate-50 dark:bg-slate-700/50">
+            <tr>
+                <th class="px-4 py-3">Durum</th> <th class="px-4 py-3">Ürün</th>
+                <th class="px-4 py-3">Konum</th> 
+                <th class="px-4 py-3">Miktar</th>
+                <th class="px-4 py-3">SKT</th>
+                <th class="px-4 py-3 text-right">İşlem</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
+            <?php 
+            $bugun = time();
+            foreach($tumUrunler as $urun): 
+                // Durum Hesaplama (Eski gruplama mantığı burada satır bazlı uygulanıyor)
+                $durumEtiketi = "";
+                $satirClass = "";
+                $sktSortValue = "9999999999"; 
 
-                                        <button onclick="transferDialog('<?= $urun['id'] ?>', '<?= (float)$urun['quantity'] ?>', '<?= htmlspecialchars($urun['unit']) ?>', '<?= htmlspecialchars($urun['name']) ?>', '<?= $urun['city_id'] ?>', '<?= $urun['location_id'] ?>', '<?= $urun['room_id'] ?>', '<?= $urun['cabinet_id'] ?>', '<?= $_SESSION['csrf_token'] ?>')" 
-                                                class="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 hover:bg-blue-500 hover:text-white flex items-center justify-center transition font-bold text-lg leading-none pb-0 shadow-sm border border-blue-200 dark:border-blue-800" title="Hızlı Transfer">
-                                            ⇄
-                                        </button>
-                                        
-                                        <span id="qty_<?= $urun['id'] ?>" class="font-medium text-slate-800 dark:text-slate-200">
-                                            <?= (float)$urun['quantity'] . ' ' . htmlspecialchars($urun['unit']) ?>
-                                        </span>
-                                    </div>
-                                </td>
+                if (empty($urun['expiry_date'])) {
+                    $durumEtiketi = '<span class="bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 px-2 py-1 rounded text-xs font-bold">Süresiz</span>';
+                } else {
+                    $skt = strtotime($urun['expiry_date']);
+                    $sktSortValue = $skt;
+                    $farkGun = ceil(($skt - $bugun) / (60 * 60 * 24));
+                    
+                    if ($farkGun < 0) {
+                        $durumEtiketi = '<span class="bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 px-2 py-1 rounded text-xs font-bold">Geçmiş</span>';
+                        $satirClass = "bg-red-50/30 dark:bg-red-900/10";
+                    } elseif ($farkGun <= 7) {
+                        $durumEtiketi = '<span class="bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300 px-2 py-1 rounded text-xs font-bold">Kritik</span>';
+                        $satirClass = "bg-orange-50/30 dark:bg-orange-900/10";
+                    } elseif ($farkGun <= 30) {
+                        $durumEtiketi = '<span class="bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300 px-2 py-1 rounded text-xs font-bold">Yakın</span>';
+                    } elseif ($farkGun <= 90) {
+                        $durumEtiketi = '<span class="bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 px-2 py-1 rounded text-xs font-bold">Orta Vade</span>';
+                    } else {
+                        $durumEtiketi = '<span class="bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300 px-2 py-1 rounded text-xs font-bold">Uzun Ömür</span>';
+                    }
+                }
+            ?>
+            <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors <?= $satirClass ?>">
+                <td class="px-4 py-3 whitespace-nowrap"><?= $durumEtiketi ?></td>
+                
+                <td class="px-4 py-3">
+                    <div class="font-medium text-slate-800 dark:text-slate-200"><?= htmlspecialchars($urun['name']) ?></div>
+                    <div class="text-xs text-slate-400"><?= htmlspecialchars($urun['brand']) ?></div>
+                    <div class="text-[10px] text-blue-500 dark:text-blue-400 mt-1">
+                        <?= htmlspecialchars($urun['category']) ?> 
+                        <?= !empty($urun['sub_category']) ? ' > '.htmlspecialchars($urun['sub_category']) : '' ?>
+                    </div>
+                </td>
+                
+                <td class="px-4 py-3 text-xs">
+                    <div class="font-bold text-slate-700 dark:text-slate-300"><?= htmlspecialchars($urun['loc_name'] ?? '-') ?> &rsaquo; <?= htmlspecialchars($urun['room_name'] ?? '-') ?></div>
+                    <div class="text-slate-500 dark:text-slate-400"><?= htmlspecialchars($urun['cab_name'] ?? '-') ?></div>
+                    <?php if($urun['shelf_location']): ?>
+                        <div class="bg-yellow-50 dark:bg-yellow-900/30 inline-block px-1 mt-1 border border-yellow-100 dark:border-yellow-800 text-[10px] rounded text-yellow-700 dark:text-yellow-400">
+                            <?= htmlspecialchars($urun['shelf_location']) ?>
+                        </div>
+                    <?php endif; ?>
+                </td>
+                
+                <td class="px-4 py-3">
+                    <div class="flex items-center gap-2">
+                        <button onclick="hizliTuket(this, '<?= $urun['id'] ?>')" class="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center transition font-bold text-lg leading-none shadow-sm border border-red-200 dark:border-red-800" title="Tüket">
+                            -
+                        </button>
 
-                                <td class="px-4 py-3">
-                                    <?php if ($kalan !== null): ?>
-                                        <div class="<?= $kalan < 0 ? 'text-red-600 dark:text-red-400 font-bold' : ($kalan < 30 ? 'text-orange-600 dark:text-orange-400 font-bold' : '') ?>">
-                                            <?= date('d.m.Y', strtotime($urun['expiry_date'])) ?>
-                                        </div>
-                                        <div class="text-[10px] text-slate-400"><?= $kalan ?> gün kaldı</div>
-                                    <?php else: ?>
-                                        <div class="text-slate-500 dark:text-slate-400 font-medium">Süresiz</div>
-                                        <div class="text-[10px] text-slate-400 dark:text-slate-500">SKT Yok</div>
-                                    <?php endif; ?>
-                                </td>
-                                <td class="px-4 py-3 text-right">
-                                    <a href="urun-duzenle.php?id=<?= $urun['id'] ?>" class="text-blue-600 dark:text-blue-400 hover:underline mr-2 text-xs font-bold">DÜZENLE</a>
-                                    <form method="POST" onsubmit="return confirm('Silinsin mi?')" class="inline">
-                                        <?php echo csrfAlaniniEkle(); ?>
-                                        <input type="hidden" name="sil_urun_id" value="<?= $urun['id'] ?>">
-                                        <button type="submit" class="text-red-500 dark:text-red-400 hover:underline text-xs bg-transparent border-none p-0 cursor-pointer">SİL</button>
-                                    </form>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        <?php endif; ?>
-    <?php endforeach; ?>
+                        <button onclick="transferDialog('<?= $urun['id'] ?>', '<?= (float)$urun['quantity'] ?>', '<?= htmlspecialchars($urun['unit']) ?>', '<?= htmlspecialchars($urun['name']) ?>', '<?= $urun['city_id'] ?>', '<?= $urun['location_id'] ?>', '<?= $urun['room_id'] ?>', '<?= $urun['cabinet_id'] ?>')" 
+                                class="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 hover:bg-blue-500 hover:text-white flex items-center justify-center transition font-bold text-md leading-none shadow-sm border border-blue-200 dark:border-blue-800" title="Hızlı Transfer">
+                            ⇄
+                        </button>
+                        
+                        <span id="qty_<?= $urun['id'] ?>" class="font-bold text-slate-800 dark:text-slate-200 ml-1">
+                            <?= (float)$urun['quantity'] . ' ' . htmlspecialchars($urun['unit']) ?>
+                        </span>
+                    </div>
+                </td>
+
+                <td class="px-4 py-3 whitespace-nowrap" data-order="<?= $sktSortValue ?>">
+                    <?php if (!empty($urun['expiry_date'])): ?>
+                        <div class="text-slate-700 dark:text-slate-300 font-medium">
+                            <?= date('d.m.Y', strtotime($urun['expiry_date'])) ?>
+                        </div>
+                        <div class="text-[10px] text-slate-400">
+                            <?= $farkGun < 0 ? abs($farkGun).' gün geçti' : $farkGun.' gün kaldı' ?>
+                        </div>
+                    <?php else: ?>
+                        <div class="text-slate-400 dark:text-slate-500 italic text-xs">SKT Yok</div>
+                    <?php endif; ?>
+                </td>
+
+                <td class="px-4 py-3 text-right whitespace-nowrap">
+                    <a href="urun-duzenle.php?id=<?= $urun['id'] ?>" class="inline-block bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 px-2 py-1 rounded text-xs font-bold transition mr-1">Düzenle</a>
+                    
+                    <form method="POST" onsubmit="confirmDelete(event)" class="inline">
+                        <?php echo csrfAlaniniEkle(); ?>
+                        <input type="hidden" name="sil_urun_id" value="<?= $urun['id'] ?>">
+                        <button type="submit" class="bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 px-2 py-1 rounded text-xs font-bold transition">Sil</button>
+                    </form>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
 </div>
 
-<div id="transferModal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-black bg-opacity-75 transition-opacity duration-300">
+<div id="transferModal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-black/70 backdrop-blur-sm transition-opacity duration-300">
     <div class="flex items-center justify-center min-h-screen p-4">
-        <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md transform transition-all border border-slate-200 dark:border-slate-700">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-md transform transition-all border border-slate-200 dark:border-slate-700">
             <div class="p-6">
-                <h3 class="text-xl font-bold text-blue-600 dark:text-blue-400 mb-4 border-b dark:border-slate-700 pb-2">
-                    ⇄ <span id="modalProductName">Ürün Transferi</span>
+                <h3 class="text-xl font-bold text-blue-600 dark:text-blue-400 mb-4 border-b dark:border-slate-700 pb-3 flex items-center gap-2">
+                    <span>⇄</span> <span id="modalProductName">Transfer</span>
                 </h3>
                 <form id="transferForm" onsubmit="event.preventDefault(); submitTransfer();" class="space-y-4">
                     <?php echo csrfAlaniniEkle(); ?>
                     <input type="hidden" id="modalProductId" name="id">
                     
-                    <div class="bg-slate-50 dark:bg-slate-700/50 p-3 rounded text-sm text-slate-700 dark:text-slate-300">
+                    <div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg text-sm text-slate-700 dark:text-slate-300 border border-blue-100 dark:border-blue-800">
                         <span id="currentLocationText" class="font-medium"></span>
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Miktar (<span id="maxQtyText"></span>)</label>
-                        <input type="number" id="transferAmount" name="amount" step="0.01" required min="0.01" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white">
+                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Transfer Miktarı (<span id="maxQtyText"></span>)</label>
+                        <input type="number" id="transferAmount" name="amount" step="0.01" required min="0.01" class="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition">
                     </div>
 
                     <div class="grid grid-cols-2 gap-4">
@@ -353,9 +322,9 @@ require 'header.php';
                         </div>
                     </div>
 
-                    <div class="flex justify-end gap-2 pt-3">
-                        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition">İptal</button>
-                        <button type="submit" class="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white font-bold transition">Transferi Tamamla</button>
+                    <div class="flex justify-end gap-3 pt-3">
+                        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 transition font-medium">Vazgeç</button>
+                        <button type="submit" class="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold transition shadow-lg shadow-blue-500/30">Onayla ve Taşı</button>
                     </div>
                 </form>
             </div>
@@ -364,227 +333,73 @@ require 'header.php';
 </div>
 
 <script>
-// PHP'den tüm konum verilerini JS'ye aktar
+// Veriler (Aynen Korundu)
 const ALL_CITIES = <?= json_encode($sehirler_transfer) ?>;
 const ALL_LOCATIONS = <?= json_encode($mekanlar_transfer) ?>;
 const ALL_ROOMS = <?= json_encode($odalar_transfer) ?>;
 const ALL_CABINETS = <?= json_encode($dolaplar_transfer) ?>;
-const CSRF_TOKEN = '<?= $_SESSION['csrf_token'] ?>'; // CSRF token'ı JS'ye aktarıldı
-</script>
+const CSRF_TOKEN = '<?= $_SESSION['csrf_token'] ?>';
 
-<script>
-// --- FİLTRELEME MANTIKLARI (GENEL VE MODAL İÇİN) ---
+// --- JAVASCRIPT & SWEETALERT ENTEGRASYONU ---
 
-// Mevcut konum filtreleri için veriyi tutar (Filtre formundaki JS için)
-const AllLocationsData = <?= json_encode($mekanlar_transfer) ?>;
-const AllRoomsData = <?= json_encode($odalar_transfer) ?>;
-const AllCabinetsData = <?= json_encode($dolaplar_transfer) ?>;
-
-
-// Sadece filtreleme formundaki "Oda" dropdownunu doldurur
-function filterRoomsForFilter(locationId) {
-    const roomSelect = document.getElementById('filter_room');
-    roomSelect.innerHTML = '<option value="">Tümü</option>';
-    document.getElementById('filter_cabinet').innerHTML = '<option value="">Tümü</option>';
-
-    if (!locationId) {
-        // Eğer locationId boşsa, tüm odaları göster (ancak PHP tarafından uygulanan şehir filtresine göre)
-        AllRoomsData.forEach(r => {
-             // Bu kısım artık gereksiz, çünkü AllRoomsData PHP'de aktif şehre göre zaten filtrelenmiş olarak geliyor
-             roomSelect.innerHTML += `<option value="${r.id}">${r.name}</option>`;
-        });
-        return;
-    }
-    
-    // locationId'ye göre filtrele
-    const filteredRooms = AllRoomsData.filter(room => room.location_id === locationId);
-    filteredRooms.forEach(room => {
-        roomSelect.innerHTML += `<option value="${room.id}">${room.name}</option>`;
+// 1. DataTables Başlatma
+$(document).ready(function() {
+    $('#urunTablosu').DataTable({
+        "language": { "url": "//cdn.datatables.net/plug-ins/1.13.6/i18n/tr.json" },
+        "pageLength": 25,
+        "order": [[ 4, "asc" ]], // Varsayılan: SKT'ye göre sırala
+        "responsive": true,
+        "columnDefs": [
+            { "orderable": false, "targets": 5 } // İşlem sütununu sıralama dışı bırak
+        ]
     });
-}
+});
 
-// Sadece filtreleme formundaki "Dolap" dropdownunu doldurur
-function filterCabinetsForFilter(roomId) {
-    const cabinetSelect = document.getElementById('filter_cabinet');
-    cabinetSelect.innerHTML = '<option value="">Tümü</option>';
-    
-    if (!roomId) {
-        // Oda filtresi kalkarsa, tüm dolapları göster (Mekan filtresine göre zaten PHP'de filtrelenmiş olmalı)
-        AllCabinetsData.forEach(c => {
-             cabinetSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`;
-        });
-        return;
-    }
+// 2. SweetAlert2 ile Silme Onayı
+function confirmDelete(event) {
+    event.preventDefault();
+    const form = event.target;
 
-    const filteredCabinets = AllCabinetsData.filter(cabinet => cabinet.room_id === roomId);
-    filteredCabinets.forEach(cabinet => {
-        cabinetSelect.innerHTML += `<option value="${cabinet.id}">${cabinet.name}</option>`;
-    });
-}
-
-
-// --- MODAL KONUM FİLTRELEME MANTIKLARI (TRANSFER) ---
-
-function populateSelect(selectId, data, defaultValue) {
-    const select = document.getElementById(selectId);
-    select.innerHTML = '<option value="">Seçiniz...</option>';
-    
-    if (data.length === 0) {
-        select.disabled = true;
-        return;
-    }
-    select.disabled = false;
-
-    data.forEach(item => {
-        const selected = item.id === defaultValue ? 'selected' : '';
-        select.innerHTML += `<option value="${item.id}" ${selected}>${item.name}</option>`;
-    });
-
-    if (selectId === 'targetCity' && defaultValue) {
-        filterLocations(defaultValue, document.getElementById('targetLocation').value);
-    } else if (selectId === 'targetLocation' && defaultValue) {
-        filterRooms(defaultValue, document.getElementById('targetRoom').value);
-    } else if (selectId === 'targetRoom' && defaultValue) {
-        filterCabinets(defaultValue, document.getElementById('targetCabinet').value);
-    }
-}
-
-function filterLocations(cityId, defaultLocationId) {
-    const filteredLocations = ALL_LOCATIONS.filter(loc => loc.city_id === cityId);
-    populateSelect('targetLocation', filteredLocations, defaultLocationId);
-    
-    if (!defaultLocationId) {
-        document.getElementById('targetRoom').innerHTML = '<option value="">Önce Mekan Seçin</option>';
-        document.getElementById('targetCabinet').innerHTML = '<option value="">Önce Oda Seçin</option>';
-    }
-}
-
-function filterRooms(locationId, defaultRoomId) {
-    const filteredRooms = ALL_ROOMS.filter(room => room.location_id === locationId);
-    populateSelect('targetRoom', filteredRooms, defaultRoomId);
-    
-    if (!defaultRoomId) {
-        document.getElementById('targetCabinet').innerHTML = '<option value="">Önce Oda Seçin</option>';
-    }
-}
-
-function filterCabinets(roomId, defaultCabinetId) {
-    const filteredCabinets = ALL_CABINETS.filter(cabinet => cabinet.room_id === roomId);
-    populateSelect('targetCabinet', filteredCabinets, defaultCabinetId);
-}
-
-
-// --- MODAL YÖNETİMİ (TRANSFER) ---
-
-function openModal() {
-    document.getElementById('transferModal').classList.remove('hidden');
-    document.body.classList.add('overflow-hidden'); 
-}
-
-function closeModal() {
-    document.getElementById('transferModal').classList.add('hidden');
-    document.body.classList.remove('overflow-hidden');
-    document.getElementById('transferForm').reset();
-}
-
-/**
- * Transfer diyalogunu açar ve modalı mevcut ürün verileriyle doldurur.
- */
-function transferDialog(product_id, current_qty, unit, product_name, current_city_id, current_location_id, current_room_id, current_cabinet_id) {
-    
-    document.getElementById('modalProductId').value = product_id;
-    document.getElementById('modalProductName').innerText = `"${product_name}" Transferi`;
-    document.getElementById('transferAmount').max = current_qty;
-    document.getElementById('maxQtyText').innerText = `${current_qty} ${unit}`;
-    
-    const currentCityName = ALL_CITIES.find(c => c.id === current_city_id)?.name || 'Bilinmiyor';
-    const currentLocationName = ALL_LOCATIONS.find(l => l.id === current_location_id)?.name || 'Bilinmiyor';
-    const currentRoomName = ALL_ROOMS.find(r => r.id === current_room_id)?.name || 'Bilinmiyor';
-    const currentCabinetName = ALL_CABINETS.find(c => c.id === current_cabinet_id)?.name || 'Bilinmiyor';
-    document.getElementById('currentLocationText').innerHTML = `Mevcut Konum: <b>${currentCityName}</b> &rsaquo; <b>${currentLocationName}</b> &rsaquo; <b>${currentRoomName}</b> &rsaquo; <b>${currentCabinetName}</b>`;
-
-
-    populateSelect('targetCity', ALL_CITIES, current_city_id);
-    filterLocations(current_city_id, current_location_id);
-    filterRooms(current_location_id, current_room_id);
-    filterCabinets(current_room_id, current_cabinet_id); 
-    
-    // CSRF Token'ı forma eklenir (PHP kodu ile eklenmişti)
-
-    openModal();
-}
-
-
-/**
- * Transfer formunu gönderir ve AJAX çağrısı yapar.
- */
-async function submitTransfer() {
-    const product_id = document.getElementById('modalProductId').value;
-    const amount = parseFloat(document.getElementById('transferAmount').value);
-    const max_qty = parseFloat(document.getElementById('transferAmount').max);
-    const new_cab_id = document.getElementById('targetCabinet').value;
-    
-    // YENİLEME: Client-side kontrol atlandığı için buradaki mevcut dolap ID'si okuma kaldırıldı.
-    // Server tarafı (ajax.php) ürüne ait mevcut dolap ID'sini güvenilir bir şekilde veritabanından çeker.
-    
-    if (amount <= 0 || amount > max_qty || isNaN(amount)) {
-        alert(`Lütfen ${max_qty} değerini aşmayan geçerli bir miktar girin.`);
-        return;
-    }
-    
-    if (!new_cab_id) {
-        alert("Lütfen hedef dolabı seçin.");
-        return;
-    }
-
-    // KRİTİK GÜVENLİK DÜZELTMESİ: İstemci tarafındaki (client-side) güvenlik kontrolü KALDIRILDI.
-    // Bu kontrol, kolayca atlatılabildiği için artık sunucu tarafına devredilmiştir (ajax.php).
-    
-    const submitBtn = document.querySelector('#transferForm button[type="submit"]');
-    submitBtn.disabled = true;
-    submitBtn.innerText = 'İşleniyor...';
-
-    // AJAX isteğine CSRF token'ı eklenir (URL Parametresi olarak)
-    // Server'ın (ajax.php) kontrol etmesi için sadece product_id ve new_cab_id gönderilir.
-    const res = await fetch(`ajax.php?islem=hizli_transfer&id=${product_id}&amount=${amount}&new_cab_id=${new_cab_id}&csrf_token=${CSRF_TOKEN}`);
-    
-    try {
-        const data = await res.json();
-        
-        if (data.success) {
-            alert(`✅ Başarılı: ${data.amount} ${data.unit} ürünü, ${data.new_cab_name} konumuna taşındı!`);
-            window.location.reload(); 
-        } else {
-            // Sunucudan gelen hata mesajı (Hedef dolap aynı olamaz uyarısı dahil) gösterilir.
-            alert(`❌ Transfer Hatası: ${data.error || 'Bilinmeyen Hata'}`);
+    Swal.fire({
+        title: 'Emin misiniz?',
+        text: "Bu ürünü kalıcı olarak silmek üzeresiniz!",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        cancelButtonColor: '#94a3b8',
+        confirmButtonText: 'Evet, Sil',
+        cancelButtonText: 'İptal',
+        background: document.documentElement.classList.contains('dark') ? '#1e293b' : '#fff',
+        color: document.documentElement.classList.contains('dark') ? '#fff' : '#0f172a'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            form.submit();
         }
-    } catch(e) {
-        alert("Sunucuya bağlanırken hata oluştu.");
-        console.error("Transfer AJAX hatası:", e);
-    } finally {
-        submitBtn.disabled = false;
-        submitBtn.innerText = 'Transferi Tamamla';
-    }
+    });
 }
 
-
-// Hızlı Tüket Fonksiyonu (Aynı kalır)
-// Fonksiyon tanımı, eklenen token parametresini alacak şekilde güncellendi
+// 3. SweetAlert2 ile Hızlı Tüketim
 async function hizliTuket(btn, id) {
-    let girilenDeger = prompt("Kaç adet tüketildi?", "1");
-    if (girilenDeger === null || girilenDeger.trim() === "") return;
-    let adet = parseFloat(girilenDeger.replace(',', '.'));
-    if (isNaN(adet) || adet <= 0) { alert("Lütfen geçerli bir sayı giriniz!"); return; }
+    const { value: adet } = await Swal.fire({
+        title: 'Hızlı Tüketim',
+        input: 'number',
+        inputLabel: 'Tüketilen miktar:',
+        inputValue: 1,
+        showCancelButton: true,
+        confirmButtonText: 'Tüket',
+        cancelButtonText: 'İptal',
+        inputAttributes: { min: 0.01, step: 0.01 },
+        background: document.documentElement.classList.contains('dark') ? '#1e293b' : '#fff',
+        color: document.documentElement.classList.contains('dark') ? '#fff' : '#0f172a'
+    });
+
+    if (!adet) return;
 
     btn.disabled = true;
-    const orjinalIcerik = btn.innerHTML;
-    const orjinalRenk = btn.className;
-    
-    btn.className = "w-6 h-6 rounded-full bg-gray-200 text-gray-400 flex items-center justify-center animate-spin border border-gray-300";
-    btn.innerHTML = "⟳";
+    const originalContent = btn.innerHTML;
+    btn.innerHTML = `<svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>`;
 
     try {
-        // AJAX isteğine CSRF token'ı eklenir (URL Parametresi olarak)
         const res = await fetch(`ajax.php?islem=hizli_tuket&id=${id}&adet=${adet}&csrf_token=${CSRF_TOKEN}`);
         const data = await res.json();
 
@@ -592,22 +407,131 @@ async function hizliTuket(btn, id) {
             const miktarSpan = document.getElementById(`qty_${id}`);
             miktarSpan.innerText = `${parseFloat(data.yeni_miktar)} ${data.birim}`;
             
-            miktarSpan.classList.add('text-red-600', 'font-bold', 'scale-110', 'transition-transform');
-            setTimeout(() => miktarSpan.classList.remove('text-red-600', 'font-bold', 'scale-110'), 500);
-            
+            // Başarılı Toast
+            Swal.fire({
+                toast: true, position: 'top-end', showConfirmButton: false, timer: 3000,
+                icon: 'success', title: 'Stok güncellendi',
+                background: document.documentElement.classList.contains('dark') ? '#1e293b' : '#fff',
+                color: document.documentElement.classList.contains('dark') ? '#fff' : '#0f172a'
+            });
+
             if (data.yeni_miktar <= 0) {
-                btn.closest('tr').classList.add('opacity-50', 'bg-gray-100', 'dark:bg-slate-800');
+                btn.closest('tr').classList.add('opacity-50', 'grayscale');
             }
         }
     } catch (e) {
-        alert("Bir hata oluştu!");
-        console.error(e);
+        Swal.fire('Hata', 'Bir sorun oluştu.', 'error');
     } finally {
-        btn.innerHTML = orjinalIcerik; 
-        btn.className = orjinalRenk;
+        btn.innerHTML = originalContent;
         btn.disabled = false;
     }
 }
+
+// 4. Transfer İşlemi (SweetAlert2)
+async function submitTransfer() {
+    const product_id = document.getElementById('modalProductId').value;
+    const amount = parseFloat(document.getElementById('transferAmount').value);
+    const max_qty = parseFloat(document.getElementById('transferAmount').max);
+    const new_cab_id = document.getElementById('targetCabinet').value;
+
+    if (amount <= 0 || amount > max_qty || isNaN(amount)) {
+        Swal.fire('Uyarı', `Lütfen geçerli bir miktar girin (Maks: ${max_qty})`, 'warning');
+        return;
+    }
+    if (!new_cab_id) {
+        Swal.fire('Uyarı', 'Lütfen hedef dolabı seçin.', 'warning');
+        return;
+    }
+
+    const submitBtn = document.querySelector('#transferForm button[type="submit"]');
+    const oldText = submitBtn.innerText;
+    submitBtn.disabled = true;
+    submitBtn.innerText = 'İşleniyor...';
+
+    try {
+        const res = await fetch(`ajax.php?islem=hizli_transfer&id=${product_id}&amount=${amount}&new_cab_id=${new_cab_id}&csrf_token=${CSRF_TOKEN}`);
+        const data = await res.json();
+        
+        if (data.success) {
+            closeModal();
+            await Swal.fire({
+                title: 'Transfer Başarılı!',
+                text: `${data.amount} ${data.unit} ürünü başarıyla taşındı.`,
+                icon: 'success',
+                confirmButtonColor: '#3b82f6'
+            });
+            window.location.reload(); 
+        } else {
+            Swal.fire('Hata', data.error || 'Bilinmeyen Hata', 'error');
+        }
+    } catch(e) {
+        Swal.fire('Hata', 'Sunucu bağlantı hatası.', 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerText = oldText;
+    }
+}
+
+// --- MODAL FONKSİYONLARI (Aynen Korundu) ---
+function openModal() {
+    document.getElementById('transferModal').classList.remove('hidden');
+    document.body.classList.add('overflow-hidden');
+}
+function closeModal() {
+    document.getElementById('transferModal').classList.add('hidden');
+    document.body.classList.remove('overflow-hidden');
+    document.getElementById('transferForm').reset();
+}
+function transferDialog(product_id, current_qty, unit, product_name, c_city, c_loc, c_room, c_cab) {
+    document.getElementById('modalProductId').value = product_id;
+    document.getElementById('modalProductName').innerText = product_name;
+    document.getElementById('transferAmount').max = current_qty;
+    document.getElementById('transferAmount').value = current_qty;
+    document.getElementById('maxQtyText').innerText = `${current_qty} ${unit}`;
+    
+    // Konum Bilgisi
+    const cName = ALL_CITIES.find(x=>x.id==c_city)?.name || '-';
+    const lName = ALL_LOCATIONS.find(x=>x.id==c_loc)?.name || '-';
+    const rName = ALL_ROOMS.find(x=>x.id==c_room)?.name || '-';
+    const cabName = ALL_CABINETS.find(x=>x.id==c_cab)?.name || '-';
+    document.getElementById('currentLocationText').innerHTML = `${cName} > ${lName} > ${rName} > <b>${cabName}</b>`;
+
+    // Selectboxları doldur
+    populateSelect('targetCity', ALL_CITIES, c_city);
+    filterLocations(c_city, c_loc);
+    filterRooms(c_loc, c_room);
+    filterCabinets(c_room, null); 
+
+    openModal();
+}
+
+// Selectbox Zinciri (Sizin Filtreleriniz İçin Gerekli)
+function populateSelect(id, data, val) {
+    const el = document.getElementById(id); el.innerHTML = '<option value="">Seçiniz...</option>';
+    if(!data.length) { el.disabled = true; return; }
+    el.disabled = false;
+    data.forEach(i => el.innerHTML += `<option value="${i.id}" ${i.id==val?'selected':''}>${i.name}</option>`);
+    
+    if(id=='targetCity' && val) filterLocations(val, document.getElementById('targetLocation').value);
+    else if(id=='targetLocation' && val) filterRooms(val, document.getElementById('targetRoom').value);
+    else if(id=='targetRoom' && val) filterCabinets(val, document.getElementById('targetCabinet').value);
+}
+// Üst Filtreleme İçin Fonksiyonlar (Sizin Yazdıklarınız)
+function filterRoomsForFilter(locationId) {
+    const roomSelect = document.getElementById('filter_room'); roomSelect.innerHTML = '<option value="">Tümü</option>';
+    document.getElementById('filter_cabinet').innerHTML = '<option value="">Tümü</option>';
+    if (!locationId) { AllRoomsData.forEach(r => roomSelect.innerHTML += `<option value="${r.id}">${r.name}</option>`); return; }
+    AllRoomsData.filter(r => r.location_id === locationId).forEach(r => roomSelect.innerHTML += `<option value="${r.id}">${r.name}</option>`);
+}
+function filterCabinetsForFilter(roomId) {
+    const cabinetSelect = document.getElementById('filter_cabinet'); cabinetSelect.innerHTML = '<option value="">Tümü</option>';
+    if (!roomId) { AllCabinetsData.forEach(c => cabinetSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`); return; }
+    AllCabinetsData.filter(c => c.room_id === roomId).forEach(c => cabinetSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`);
+}
+// Modal İçin Fonksiyonlar
+function filterLocations(cid, def) { const d = ALL_LOCATIONS.filter(x=>x.city_id==cid); populateSelect('targetLocation', d, def); if(!def) { document.getElementById('targetRoom').innerHTML=''; document.getElementById('targetCabinet').innerHTML=''; } }
+function filterRooms(lid, def) { const d = ALL_ROOMS.filter(x=>x.location_id==lid); populateSelect('targetRoom', d, def); if(!def) document.getElementById('targetCabinet').innerHTML=''; }
+function filterCabinets(rid, def) { const d = ALL_CABINETS.filter(x=>x.room_id==rid); populateSelect('targetCabinet', d, def); }
 </script>
 </body>
 </html>
