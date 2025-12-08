@@ -48,12 +48,17 @@ try {
     // 6. HIZLI TÜKETİM (Tüketim Geçmişi Kaydı ile birlikte)
     elseif ($islem === 'hizli_tuket') {
         // KRİTİK GÜVENLİK DÜZELTMESİ: CSRF token kontrolü
-        // AJAX isteğinin GET parametresi olarak token'ı taşıması gerekir.
         csrfKontrol($_GET['token'] ?? $_GET['csrf_token'] ?? ''); 
         
         $adet = isset($_GET['adet']) ? (float)$_GET['adet'] : 1;
         
         if ($adet <= 0) $adet = 1;
+
+        // ** AUDIT LOG İÇİN BİLGİ ÇEK **
+        // Güncellemeden önce ürün adını alalım ki loga yazabilelim
+        $stmtInfo = $pdo->prepare("SELECT name, unit FROM products WHERE id = ?");
+        $stmtInfo->execute([$id]);
+        $urunInfo = $stmtInfo->fetch();
 
         $update = $pdo->prepare("UPDATE products SET quantity = GREATEST(0, quantity - ?) WHERE id = ?");
         $update->execute([$adet, $id]);
@@ -61,6 +66,11 @@ try {
         // Tüketim Geçmişi Kaydı (Tüketim Analizi için)
         $pdo->prepare("INSERT INTO consumption_history (product_id, amount, consumed_at) VALUES (?, ?, NOW())")
             ->execute([$id, $adet]);
+        
+        // ** AUDIT LOG KAYDI **
+        if ($urunInfo) {
+            auditLog('TÜKETİM', "{$urunInfo['name']} ürününden {$adet} {$urunInfo['unit']} hızlı tüketildi.");
+        }
         
         $stmt = $pdo->prepare("SELECT quantity, unit FROM products WHERE id = ?");
         $stmt->execute([$id]);
@@ -84,7 +94,7 @@ try {
             return;
         }
 
-        // 1. ÖNCE YEREL VERİTABANINI KONTROL ET (ÖĞRENME MEKANİZMASI)
+        // 1. ÖNCE YEREL VERİTABANINI KONTROL ET
         $stmt_local = $pdo->prepare("SELECT name, brand, category FROM products WHERE barcode = ? LIMIT 1");
         $stmt_local->execute([$barcode]);
         $local_product = $stmt_local->fetch(PDO::FETCH_ASSOC);
@@ -152,7 +162,7 @@ try {
             return;
         }
 
-        // 1. Ürünün mevcut durumunu veritabanından kontrol et (Sunucu Tarafı Kontrolü)
+        // 1. Ürünün mevcut durumunu veritabanından kontrol et
         $stmt_current = $pdo->prepare("SELECT * FROM products WHERE id = ?");
         $stmt_current->execute([$id]);
         $urun = $stmt_current->fetch(PDO::FETCH_ASSOC);
@@ -165,7 +175,7 @@ try {
         $current_qty = (float)$urun['quantity'];
         $current_cab_id = $urun['cabinet_id'];
 
-        // KRİTİK GÜVENLİK DÜZELTMESİ: Hedef dolap mevcut dolap mı?
+        // Hedef dolap mevcut dolap mı?
         if ($new_cab_id === $current_cab_id) {
             echo json_encode(['success' => false, 'error' => 'Hedef dolap, ürünün mevcut dolabıyla aynı olamaz.']);
             return;
@@ -176,26 +186,30 @@ try {
             return;
         }
         
-        // 2. Dolap adını al (Yanıt için)
+        // 2. Dolap adını al (Yanıt ve Log için)
         $stmt_cab_name = $pdo->prepare("SELECT name FROM cabinets WHERE id = ?");
         $stmt_cab_name->execute([$new_cab_id]);
         $new_cab_name = $stmt_cab_name->fetchColumn() ?? 'Bilinmeyen Dolap';
 
-        // 3. İşlem: Transferi Gerçekleştir (Transaction ile güvenli)
+        // 3. İşlem: Transferi Gerçekleştir
         $pdo->beginTransaction();
         
         try {
             if ($amount === $current_qty) {
-                // Tamamı transfer ediliyorsa, mevcut kaydın dolap ID'sini güncelle
+                // Tamamı transfer ediliyorsa
                 $update_sql = "UPDATE products SET cabinet_id = ? WHERE id = ?";
                 $pdo->prepare($update_sql)->execute([$new_cab_id, $id]);
+
+                // ** AUDIT LOG (TAM TRANSFER) **
+                auditLog('TRANSFER', "{$urun['name']} (Tamamı - {$amount} {$urun['unit']}) '$new_cab_name' dolabına taşındı.");
+
             } else {
                 // Kısmi transfer yapılıyorsa:
                 // a. Mevcut kaydın miktarını azalt
                 $update_sql = "UPDATE products SET quantity = quantity - ? WHERE id = ?";
                 $pdo->prepare($update_sql)->execute([$amount, $id]);
 
-                // b. Yeni bir ürün kaydı oluştur (Transfer edilen miktar için)
+                // b. Yeni bir ürün kaydı oluştur
                 $new_id = uniqid('prod_');
                 $new_sql = "INSERT INTO products (id, name, brand, category, sub_category, quantity, unit, cabinet_id, shelf_location, purchase_date, expiry_date, added_by_user_id) 
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
@@ -214,6 +228,9 @@ try {
                     $urun['expiry_date'],
                     $urun['added_by_user_id']
                 ]);
+
+                // ** AUDIT LOG (KISMI TRANSFER) **
+                auditLog('TRANSFER', "{$urun['name']} (Parça - {$amount} {$urun['unit']}) '$new_cab_name' dolabına ayrıldı/taşındı.");
             }
 
             $pdo->commit();
