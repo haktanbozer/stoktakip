@@ -43,7 +43,9 @@ $options = [
 try {
     $pdo = new PDO($dsn, $user, $pass, $options);
 } catch (\PDOException $e) {
-    die("Veritabanı bağlantı hatası: " . $e->getMessage());
+    // GÜVENLİK DÜZELTMESİ: Detaylı hatayı logla, kullanıcıya genel mesaj göster
+    error_log("Veritabanı bağlantı hatası: " . $e->getMessage());
+    die("Sunucuya bağlanılamıyor. Lütfen daha sonra tekrar deneyin veya yöneticinize başvurun.");
 }
 
 // 3. Giriş Kontrol Fonksiyonu
