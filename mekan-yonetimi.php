@@ -2,6 +2,9 @@
 require 'db.php';
 girisKontrol();
 
+// KRİTİK GÜVENLİK DÜZELTMESİ: Sadece ADMIN rolüne sahip kullanıcıların erişimi
+if ($_SESSION['role'] !== 'ADMIN') die("Bu sayfaya erişim yetkiniz yok. Yönetici izni gereklidir.");
+
 $mesaj = '';
 
 // --- POST İŞLEMLERİ ---
@@ -211,7 +214,7 @@ require 'header.php';
                                             <?php echo csrfAlaniniEkle(); ?>
                                             <input type="hidden" name="tablo" value="rooms">
                                             <input type="hidden" name="sil_id" value="<?= $o['id'] ?>">
-                                            <button type="submit" class="text-red-400 hover:text-red-600 dark:hover:text-red-300 p-1 transition-colors">✕</button>
+                                            <button type="submit" class="text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 font-medium text-xs transition">Sil</button>
                                         </form>
                                     </td>
                                 </tr>
