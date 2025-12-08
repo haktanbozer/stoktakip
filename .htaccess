@@ -1,75 +1,61 @@
 # ----------------------------------------------------------------------
-# 1. GÜVENLİK AYARLARI (Temel Koruma)
+# 1. TEMEL GÜVENLİK AYARLARI
 # ----------------------------------------------------------------------
 
-# Dizin listelemeyi kapat (Klasör içeriği görünmesin)
+# Dizin listelemeyi kapat
 Options -Indexes
 
-# Hassas dosyalara (env, git, loglar) erişimi engelle
+# Hassas dosyalara erişimi engelle
 <FilesMatch "^\.env|^\.git|^\.htaccess|composer\.json|composer\.lock">
     Order allow,deny
     Deny from all
 </FilesMatch>
 
-# Log ve Session klasörlerini dışarıya kapat
+# Log ve Session klasörlerini koru
 RewriteEngine On
 RewriteRule ^logs/ - [F,L]
 RewriteRule ^sessions/ - [F,L]
 
 # ----------------------------------------------------------------------
-# 2. ARAMA MOTORU ENGELLEME (SEO Gizliliği)
+# 2. GÜVENLİK VE SEO HEADERLARI (GÜNCELLENDİ)
 # ----------------------------------------------------------------------
 
-# Tüm arama motorlarına "Beni İndeksleme" komutu gönderir
 <IfModule mod_headers.c>
+    # Arama motorlarını engelle (SEO)
     Header set X-Robots-Tag "noindex, nofollow"
+
+    # --- CLICKJACKING KORUMASI (YENİ) ---
+    # Sitenin sadece kendi domaini üzerinde iframe içinde çalışmasına izin verir.
+    # Başka siteler sizin sitenizi gömemez.
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Content-Security-Policy "frame-ancestors 'self'"
 </IfModule>
 
 # ----------------------------------------------------------------------
-# 3. PERFORMANS OPTİMİZASYONU (Hızlandırma)
+# 3. PERFORMANS OPTİMİZASYONU
 # ----------------------------------------------------------------------
 
-# Gzip Sıkıştırma (Dosya boyutlarını küçültür)
+# Gzip Sıkıştırma
 <IfModule mod_deflate.c>
     AddOutputFilterByType DEFLATE text/plain
     AddOutputFilterByType DEFLATE text/html
     AddOutputFilterByType DEFLATE text/xml
     AddOutputFilterByType DEFLATE text/css
     AddOutputFilterByType DEFLATE application/xml
-    AddOutputFilterByType DEFLATE application/xhtml+xml
-    AddOutputFilterByType DEFLATE application/rss+xml
     AddOutputFilterByType DEFLATE application/javascript
-    AddOutputFilterByType DEFLATE application/x-javascript
     AddOutputFilterByType DEFLATE application/json
 </IfModule>
 
-# Tarayıcı Önbellekleme (Browser Caching - Dosyaları tarayıcı hafızasına alır)
+# Tarayıcı Önbellekleme (Caching)
 <IfModule mod_expires.c>
     ExpiresActive On
-    
-    # Varsayılan önbellek (1 ay)
     ExpiresDefault "access plus 1 month"
-
-    # CSS ve JS dosyaları (1 yıl - versiyonlama yoksa 1 ay yapabilirsiniz)
     ExpiresByType text/css "access plus 1 year"
     ExpiresByType application/javascript "access plus 1 year"
-    
-    # Görseller (1 yıl)
     ExpiresByType image/jpg "access plus 1 year"
     ExpiresByType image/jpeg "access plus 1 year"
     ExpiresByType image/gif "access plus 1 year"
     ExpiresByType image/png "access plus 1 year"
     ExpiresByType image/svg+xml "access plus 1 year"
-    ExpiresByType image/x-icon "access plus 1 year"
-
-    # HTML dosyaları (Her zaman güncel kalsın - önbellekleme yok)
     ExpiresByType text/html "access plus 0 seconds"
 </IfModule>
-
-# ----------------------------------------------------------------------
-# 4. HTTPS YÖNLENDİRMESİ (Opsiyonel - SSL Varsa Açın)
-# ----------------------------------------------------------------------
-# <IfModule mod_rewrite.c>
-#     RewriteCond %{HTTPS} off
-#     RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
-# </IfModule>
