@@ -1,33 +1,44 @@
 <?php
-// cron-mail.php - Konum Detaylı ve Filtreli Bildirim Sistemi
-require 'db.php';
+// cron-mail.php - Manuel PHPMailer Yüklemeli
 
-// PHPMailer (Varsa)
-if (file_exists('vendor/autoload.php')) {
-    require 'vendor/autoload.php';
+// Hataları Göster (Test için)
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+// 1. Veritabanı Bağlantısı
+require __DIR__ . '/db.php';
+
+// 2. PHPMailer Dosyalarını Manuel Dahil Et
+// (vendor/autoload.php yerine bunları kullanıyoruz)
+$phpMailerYolu = __DIR__ . '/PHPMailer/';
+
+if (!file_exists($phpMailerYolu . 'PHPMailer.php')) {
+    die("<h3>❌ HATA:</h3> PHPMailer dosyaları bulunamadı!<br>Lütfen 'PHPMailer' klasörünü oluşturup içine Exception.php, PHPMailer.php ve SMTP.php dosyalarını yüklediğinizden emin olun.<br>Aranan yol: " . $phpMailerYolu);
 }
+
+require $phpMailerYolu . 'Exception.php';
+require $phpMailerYolu . 'PHPMailer.php';
+require $phpMailerYolu . 'SMTP.php';
+
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
-// --- AYARLAR ---
+echo "✅ PHPMailer yüklendi. İşlem başlıyor...<br>";
 
-// Eğer sadece belirli bir şehrin bildirimleri gitsin istiyorsanız ID'sini yazın (Örn: 'city_657...')
-// Tüm şehirler için çalışsın istiyorsanız null bırakın.
+// --- AYARLAR ---
 $sadeceBuSehirId = null; 
 
-// Bildirim günlerini çek
+// Bildirim Eşiklerini Çek
 $stmt = $pdo->query("SELECT days FROM notification_thresholds");
 $bildirimGunleri = $stmt->fetchAll(PDO::FETCH_COLUMN);
 if (empty($bildirimGunleri)) $bildirimGunleri = [90, 60, 30, 7, 3, 1];
 
 $bugun = new DateTime();
 
-// --- 1. SORGULARI HAZIRLA ---
-
-// Kullanıcıları Çek
+// --- VERİLERİ HAZIRLA ---
 $kullanicilar = $pdo->query("SELECT email, username FROM users")->fetchAll();
 
-// Ürünleri ve TAM KONUM BİLGİLERİNİ Çek (JOIN İşlemi)
 $sql = "SELECT p.*, 
                c.name as dolap_adi, 
                r.name as oda_adi, 
@@ -41,19 +52,13 @@ $sql = "SELECT p.*,
         LEFT JOIN cities ci ON l.city_id = ci.id
         WHERE 1=1";
 
-// Eğer şehir filtresi varsa sorguya ekle
-$params = [];
 if ($sadeceBuSehirId !== null) {
-    $sql .= " AND ci.id = ?";
-    $params[] = $sadeceBuSehirId;
+    $sql .= " AND ci.id = " . $pdo->quote($sadeceBuSehirId);
 }
 
-$stmt = $pdo->prepare($sql);
-$stmt->execute($params);
-$urunler = $stmt->fetchAll();
+$urunler = $pdo->query($sql)->fetchAll();
 
-// --- 2. MAİL İÇERİĞİNİ OLUŞTUR ---
-
+// --- HTML İÇERİĞİ OLUŞTUR ---
 $gonderilecekMailIcerigi = "";
 $mailVarMi = false;
 $kritikUrunSayisi = 0;
@@ -62,7 +67,7 @@ foreach ($urunler as $urun) {
     if (empty($urun['expiry_date'])) continue;
 
     $skt = new DateTime($urun['expiry_date']);
-    if ($skt < $bugun) continue; // Geçmişleri atla (veya tercihe göre dahil et)
+    if ($skt < $bugun) continue; 
 
     $fark = $bugun->diff($skt);
     $kalanGun = (int)$fark->format('%a');
@@ -71,134 +76,91 @@ foreach ($urunler as $urun) {
         $mailVarMi = true;
         $kritikUrunSayisi++;
         
-        $urunAdi = htmlspecialchars($urun['name']);
-        $marka = htmlspecialchars($urun['brand']);
-        
-        // Konum bilgisini birleştir (Şehir > Mekan > Oda > Dolap)
-        $konumBilgisi = "
-            <div style='font-size:11px; color:#555;'>
-                📍 <b>" . htmlspecialchars($urun['sehir_adi'] ?? '-') . "</b><br>
-                " . htmlspecialchars($urun['mekan_adi'] ?? '') . " &rsaquo; 
-                " . htmlspecialchars($urun['oda_adi'] ?? '') . " &rsaquo; 
-                <b>" . htmlspecialchars($urun['dolap_adi'] ?? '') . "</b>
-            </div>";
-
-        $renk = ($kalanGun <= 3) ? '#dc2626' : '#ea580c'; // Kırmızı veya Turuncu
+        $konum = htmlspecialchars(($urun['sehir_adi'] ?? '-') . " > " . ($urun['mekan_adi'] ?? '') . " > " . ($urun['oda_adi'] ?? '') . " > " . ($urun['dolap_adi'] ?? ''));
+        $renk = ($kalanGun <= 3) ? '#dc2626' : '#ea580c';
 
         $gonderilecekMailIcerigi .= "
         <tr>
-            <td style='padding:8px; border-bottom:1px solid #eee; vertical-align:top;'>
-                <b style='font-size:14px;'>{$urunAdi}</b><br>
-                <span style='font-size:11px; color:#777;'>{$marka}</span>
-            </td>
-            <td style='padding:8px; border-bottom:1px solid #eee; vertical-align:top;'>
-                {$konumBilgisi}
-            </td>
-            <td style='padding:8px; border-bottom:1px solid #eee; vertical-align:top; color:{$renk}; white-space:nowrap;'>
-                <b>{$kalanGun} Gün</b>
-            </td>
+            <td style='padding:8px; border-bottom:1px solid #eee;'><b>".htmlspecialchars($urun['name'])."</b><br><span style='font-size:11px; color:#666;'>".htmlspecialchars($urun['brand'])."</span></td>
+            <td style='padding:8px; border-bottom:1px solid #eee; font-size:12px;'>{$konum}</td>
+            <td style='padding:8px; border-bottom:1px solid #eee; color:{$renk};'><b>{$kalanGun} Gün</b></td>
         </tr>";
     }
 }
 
-// --- 3. MAİL GÖNDERİMİ ---
-
+// --- MAİL GÖNDERİMİ ---
 if ($mailVarMi) {
-    $konuHam = "⚠️ StokTakip: $kritikUrunSayisi Ürün İçin Kritik SKT Uyarısı";
-    
-    $mesajGovdesi = "
-    <html>
-    <body style='font-family: Arial, sans-serif; background-color:#f4f4f9; padding:20px;'>
-        <div style='max-width:650px; margin:0 auto; background:white; padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);'>
-            <h3 style='color:#1e293b; border-bottom:2px solid #e2e8f0; padding-bottom:10px;'>Stok Takip Bildirimi</h3>
-            <p style='color:#475569;'>Aşağıdaki ürünlerin son kullanma tarihleri yaklaşıyor:</p>
-            
-            <table style='width:100%; border-collapse: collapse; text-align:left;'>
-                <thead>
-                    <tr style='background-color:#f1f5f9; color:#334155;'>
-                        <th style='padding:10px; border-bottom:2px solid #cbd5e1;'>Ürün Detayı</th>
-                        <th style='padding:10px; border-bottom:2px solid #cbd5e1;'>Tam Konum</th>
-                        <th style='padding:10px; border-bottom:2px solid #cbd5e1;'>Kalan Süre</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    $gonderilecekMailIcerigi
-                </tbody>
-            </table>
-            
-            <div style='margin-top:20px; text-align:center;'>
-                <a href='https://bozer.com.tr/stok-takip' style='background:#2563eb; color:white; padding:12px 24px; text-decoration:none; border-radius:6px; font-weight:bold; font-size:14px;'>Panele Git ve İşlem Yap</a>
-            </div>
-            <p style='margin-top:20px; font-size:11px; color:#94a3b8; text-align:center;'>Bu e-posta otomatik oluşturulmuştur.</p>
-        </div>
-    </body>
-    </html>
-    ";
+    echo "⚠️ $kritikUrunSayisi adet bildirim bulundu. Mail gönderiliyor...<br>";
 
-    // SMTP Ayarları (.env'den)
+    $konu = "⚠️ StokTakip: $kritikUrunSayisi Ürün İçin Kritik Uyarı";
+    $mesaj = "
+    <html>
+    <body style='font-family: sans-serif; padding:20px;'>
+        <h3>Stok Takip Bildirimi</h3>
+        <table style='width:100%; border-collapse: collapse; text-align:left;'>
+            <tr style='background:#f1f5f9;'>
+                <th style='padding:10px; border-bottom:2px solid #ddd;'>Ürün</th>
+                <th style='padding:10px; border-bottom:2px solid #ddd;'>Konum</th>
+                <th style='padding:10px; border-bottom:2px solid #ddd;'>Süre</th>
+            </tr>
+            $gonderilecekMailIcerigi
+        </table>
+        <p><a href='https://bozer.com.tr/stok-takip'>Panele Git</a></p>
+    </body>
+    </html>";
+
+    // SMTP Ayarları
     $smtpHost = getenv('SMTP_HOST');
     $smtpUser = getenv('SMTP_USER');
     $smtpPass = getenv('SMTP_PASS');
     $smtpPort = getenv('SMTP_PORT') ?: 587;
 
-    foreach ($kullanicilar as $kullanici) {
-        $email = $kullanici['email'];
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) continue;
+    if (!$smtpHost || !$smtpUser || !$smtpPass) {
+        die("<h3>❌ HATA:</h3> .env dosyasında SMTP ayarları eksik!");
+    }
 
-        $gonderildi = false;
-        $hataMesaji = '';
+    $mail = new PHPMailer(true);
+    
+    try {
+        $mail->CharSet = 'UTF-8';
+        $mail->isSMTP();
+        $mail->Host       = $smtpHost;
+        $mail->SMTPAuth   = true;
+        $mail->Username   = $smtpUser;
+        $mail->Password   = $smtpPass;
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS; 
+        $mail->Port       = $smtpPort;
 
-        // A) PHPMailer
-        if (class_exists('PHPMailer\PHPMailer\PHPMailer') && $smtpHost) {
-            try {
-                $mail = new PHPMailer(true);
-                $mail->CharSet = 'UTF-8';
-                $mail->isSMTP();
-                $mail->Host       = $smtpHost;
-                $mail->SMTPAuth   = true;
-                $mail->Username   = $smtpUser;
-                $mail->Password   = $smtpPass;
-                $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS; 
-                $mail->Port       = $smtpPort;
-
-                $mail->setFrom($smtpUser, 'StokTakip Bildirim');
-                $mail->addAddress($email);
+        $mail->setFrom($smtpUser, 'StokTakip Bildirim');
+        
+        $gonderilenSayisi = 0;
+        foreach ($kullanicilar as $kullanici) {
+            if (filter_var($kullanici['email'], FILTER_VALIDATE_EMAIL)) {
+                $mail->addAddress($kullanici['email']);
                 $mail->isHTML(true);
-                $mail->Subject = $konuHam;
-                $mail->Body    = $mesajGovdesi;
-
+                $mail->Subject = $konu;
+                $mail->Body    = $mesaj;
                 $mail->send();
-                $gonderildi = true;
-            } catch (Exception $e) {
-                $gonderildi = false;
-                $hataMesaji = $mail->ErrorInfo;
+                $gonderilenSayisi++;
+                $mail->clearAddresses();
+                
+                // Logla
+                if(isset($pdo)) {
+                    $pdo->prepare("INSERT INTO notification_logs (id, user_email, subject, content_summary, status) VALUES (UUID(), ?, ?, ?, 'sent')")->execute([$kullanici['email'], $konu, "$kritikUrunSayisi ürün"]);
+                }
             }
-        } 
-        // B) Native Mail
-        else {
-            if (preg_match( "/[\r\n]/", $email)) continue;
-            $konuEncoded = "=?UTF-8?B?" . base64_encode($konuHam) . "?=";
-            $headers = [
-                "MIME-Version: 1.0",
-                "Content-type: text/html; charset=UTF-8",
-                "From: StokTakip <$smtpUser>",
-                "X-Mailer: PHP/" . phpversion()
-            ];
-            $gonderildi = mail($email, $konuEncoded, $mesajGovdesi, implode("\r\n", $headers));
         }
         
-        // Loglama
-        try {
-            if(isset($pdo)) {
-                $durum = $gonderildi ? 'sent' : 'failed';
-                $ozet = "$kritikUrunSayisi ürün. " . ($hataMesaji ? "Hata: $hataMesaji" : "");
-                $stmt = $pdo->prepare("INSERT INTO notification_logs (id, user_email, subject, content_summary, status) VALUES (UUID(), ?, ?, ?, ?)");
-                $stmt->execute([$email, $konuHam, $ozet, $durum]);
-            }
-        } catch(Exception $e) {}
+        echo "🚀 <b>BAŞARILI:</b> Toplam $gonderilenSayisi kişiye mail gönderildi.<br>";
+
+    } catch (Exception $e) {
+        echo "<h3>❌ MAİL GÖNDERİM HATASI:</h3> " . $mail->ErrorInfo . "<br>";
+        if(isset($pdo)) {
+             $pdo->prepare("INSERT INTO notification_logs (id, user_email, subject, content_summary, status) VALUES (UUID(), 'system', ?, ?, 'failed')")->execute(["Mail Hatası", $mail->ErrorInfo]);
+        }
     }
-    echo "İşlem tamamlandı: $kritikUrunSayisi ürün bildirildi.";
+
 } else {
-    echo "Bildirim yapılacak ürün yok.";
+    echo "✅ Bugün için gönderilecek bir bildirim yok.<br>";
 }
 ?>

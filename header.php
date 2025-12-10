@@ -16,6 +16,7 @@ if (!isset($cspNonce)) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stok Takip Sistemi</title>
     
+    <!-- Tailwind CSS - Production için CDN yerine derlenmiş CSS kullanılmalı -->
     <script src="https://cdn.tailwindcss.com"></script>
     
     <script src="https://code.jquery.com/jquery-3.7.0.min.js" integrity="sha256-2Pmvv0kuTBOenSvLm6bvfBSSHrUJ+3A7x6P5Ebd07/g=" crossorigin="anonymous"></script>
@@ -26,7 +27,8 @@ if (!isset($cspNonce)) {
     
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.tailwindcss.min.css">
 
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.7.32/dist/sweetalert2.all.min.js" integrity="sha256-J7pX7ZJ8yX9xq3x8X1xY7x5x5x5x5x5x5x5x5x5x5w=" crossorigin="anonymous"></script>
+    <!-- SweetAlert2 - Integrity hash kaldırıldı (CSP hatası veriyordu) -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <script nonce="<?= $cspNonce ?>">
         tailwind.config = {
@@ -108,7 +110,6 @@ if (!isset($cspNonce)) {
                 // --- BİLDİRİM SORGUSU (ŞEHİR FİLTRELİ VE KONUM DETAYLI) ---
                 global $pdo; 
                 if($pdo) {
-                    // SELECT kısmına dolap, oda ve mekan isimlerini ekledik
                     $sql = "SELECT n.*, 
                                    p.name as urun_adi,
                                    c.name as dolap_adi,
@@ -123,7 +124,6 @@ if (!isset($cspNonce)) {
                     
                     $params = [];
 
-                    // Eğer aktif şehir varsa filtrele
                     if (isset($_SESSION['aktif_sehir_id'])) {
                         $sql .= " AND l.city_id = ?";
                         $params[] = $_SESSION['aktif_sehir_id'];
@@ -139,7 +139,7 @@ if (!isset($cspNonce)) {
             } catch(Exception $e) { $bildirimSayisi = 0; $bildirimler = []; }
             ?>
             <div class="relative group mr-2">
-                <button class="relative p-2 text-slate-300 hover:text-white transition">
+                <button type="button" class="relative p-2 text-slate-300 hover:text-white transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
                     <?php if($bildirimSayisi > 0): ?>
                         <span class="absolute top-0 right-0 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full animate-pulse"><?= $bildirimSayisi ?></span>

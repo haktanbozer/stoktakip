@@ -244,7 +244,7 @@ if (!headers_sent()) {
                  "style-src 'self' 'unsafe-inline' https://cdn.datatables.net https://cdn.jsdelivr.net; " .
                  "img-src 'self' data:; " .
                  "font-src 'self' https://cdnjs.cloudflare.com; " .
-                 "connect-src 'self' https://generativelanguage.googleapis.com;";
+                 "connect-src 'self' https://generativelanguage.googleapis.com https://cdn.datatables.net;";
 
     header("Content-Security-Policy: " . $cspHeader);
 }
