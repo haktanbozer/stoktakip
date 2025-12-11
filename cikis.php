@@ -5,8 +5,10 @@
 require 'db.php';
 
 // Oturumu sonlandır
+session_unset();
 session_destroy();
-
+setcookie(session_name(), '', time()-3600, '/');
+session_regenerate_id(true);
 // Giriş sayfasına yönlendir
 header("Location: login.php");
 exit;
