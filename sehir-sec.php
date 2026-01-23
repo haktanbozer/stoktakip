@@ -92,8 +92,7 @@ if ($userRole === 'ADMIN') {
     </button>
 
     <div class="text-center mb-8">
-        <h1 class="text-4xl font-bold text-slate-800 dark:text-white mb-2">Hoş Geldiniz, <?= htmlspecialchars($_SESSION['username']) ?> 👋</h1>
-        <p class="text-slate-500 dark:text-slate-400">
+<h1 class="text-4xl font-bold text-slate-800 dark:text-white mb-2">Hoş Geldiniz, <?= htmlspecialchars($_SESSION['username']) ?> 👋</h1>        <p class="text-slate-500 dark:text-slate-400">
             <?= empty($sehirler) && $userRole !== 'ADMIN' ? 'Size atanmış bir şehir bulunamadı. Lütfen yöneticiyle görüşün.' : 'İşlem yapmak istediğiniz konumu seçiniz.' ?>
         </p>
     </div>
