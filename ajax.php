@@ -15,33 +15,92 @@ if (function_exists('girisKontrol')) {
 // JSON formatında yanıt vereceğimizi belirtelim
 header('Content-Type: application/json; charset=utf-8');
 
+// --- YARDIMCI FONKSİYON: TÜRKÇE SIRALAMA ---
+// Bu fonksiyon hem düz dizileri (alt kategoriler) hem de veritabanı sonuçlarını (id, name) sıralar.
+function turkceSirala(&$array, $key = null) {
+    // 1. Yöntem: Sunucuda Intl (Uluslararasılaştırma) kütüphanesi varsa en temizi budur.
+    if (class_exists('Collator')) {
+        $collator = new Collator('tr_TR');
+        if ($key) {
+            // Veritabanı sonucu gibi çok boyutlu diziler için (name alanına göre)
+            usort($array, function($a, $b) use ($collator, $key) {
+                return $collator->compare($a[$key], $b[$key]);
+            });
+        } else {
+            // Düz liste için (alt kategoriler)
+            $collator->sort($array);
+        }
+    } 
+    // 2. Yöntem: Intl yoksa manuel harf dönüşümü ile sıralama
+    else {
+        $sortFunc = function($a, $b) use ($key) {
+            $valA = $key ? $a[$key] : $a;
+            $valB = $key ? $b[$key] : $b;
+
+            $tr_map = [
+                'ç' => 'c1', 'Ç' => 'C1',
+                'ğ' => 'g1', 'Ğ' => 'G1',
+                'ı' => 'h1', 'I' => 'H1', // I harfini H'den sonraya at
+                'i' => 'h2', 'İ' => 'H2', // İ harfini I'dan sonraya at
+                'ö' => 'o1', 'Ö' => 'O1',
+                'ş' => 's1', 'Ş' => 'S1',
+                'ü' => 'u1', 'Ü' => 'U1'
+            ];
+            
+            $transA = strtr(mb_strtolower($valA, 'UTF-8'), $tr_map);
+            $transB = strtr(mb_strtolower($valB, 'UTF-8'), $tr_map);
+            
+            return strcmp($transA, $transB);
+        };
+        usort($array, $sortFunc);
+    }
+}
+
 $islem = $_GET['islem'] ?? '';
-// ID’ler VARCHAR (prod_..., cab_...) olduğu için numeric’e çevirmiyoruz
 $id    = $_GET['id'] ?? '';
 
 try {
-    // 1-5. DROPDOWN VE KATEGORİ İŞLEMLERİ
+    // 1. MEKANLARI GETİR (Sıralı)
     if ($islem === 'get_mekanlar') {
         $cityId = $_GET['id'] ?? '';
-        $stmt = $pdo->prepare("SELECT id, name FROM locations WHERE city_id = ? ORDER BY name ASC");
+        // SQL'de ORDER BY kaldırıldı, PHP'de sıralayacağız
+        $stmt = $pdo->prepare("SELECT id, name FROM locations WHERE city_id = ?");
         $stmt->execute([$cityId]);
-        echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));   // <-- sadece assos
+        $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        turkceSirala($data, 'name'); // 'name' alanına göre Türkçe sırala
+        
+        echo json_encode($data);
         exit;
     }
+    
+    // 2. ODALARI GETİR (Sıralı)
     elseif ($islem === 'get_odalar') {
         $locId = $_GET['id'] ?? '';
-        $stmt = $pdo->prepare("SELECT id, name FROM rooms WHERE location_id = ? ORDER BY name ASC");
+        $stmt = $pdo->prepare("SELECT id, name FROM rooms WHERE location_id = ?");
         $stmt->execute([$locId]);
-        echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+        $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        turkceSirala($data, 'name'); // 'name' alanına göre Türkçe sırala
+        
+        echo json_encode($data);
         exit;
     }
+    
+    // 3. DOLAPLARI GETİR (Sıralı)
     elseif ($islem === 'get_dolaplar') {
         $roomId = $_GET['id'] ?? '';
-        $stmt = $pdo->prepare("SELECT id, name FROM cabinets WHERE room_id = ? ORDER BY name ASC");
+        $stmt = $pdo->prepare("SELECT id, name FROM cabinets WHERE room_id = ?");
         $stmt->execute([$roomId]);
-        echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+        $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        turkceSirala($data, 'name'); // 'name' alanına göre Türkçe sırala
+        
+        echo json_encode($data);
         exit;
     }
+    
+    // 4. DOLAP DETAY (Sıralama gerekmez, tek kayıt)
     elseif ($islem === 'get_dolap_detay') {
         $cabId = $_GET['id'] ?? '';
         $stmt = $pdo->prepare("SELECT * FROM cabinets WHERE id = ?");
@@ -50,10 +109,11 @@ try {
         echo json_encode($dolap ?: []);
         exit;
     }
+    
+    // 5. ALT KATEGORİLERİ GETİR (Sıralı)
     elseif ($islem === 'get_alt_kategoriler') {
         $name = $_GET['name'] ?? '';
 
-        // categories tablosunda sub_categories VARCHAR(…) "a,b,c" gibi tutulduğunu varsayıyorum
         $stmt = $pdo->prepare("SELECT sub_categories FROM categories WHERE name = ? LIMIT 1");
         $stmt->execute([$name]);
         $cat = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -63,6 +123,8 @@ try {
             $subCats = explode(',', $cat['sub_categories']);
             $subCats = array_map('trim', $subCats);
             $subCats = array_filter($subCats, fn($v) => $v !== '');
+            
+            turkceSirala($subCats); // Düz dizi olduğu için key vermiyoruz
         }
 
         echo json_encode(array_values($subCats));
@@ -71,7 +133,7 @@ try {
 
     // 6. HIZLI TÜKETİM
     elseif ($islem === 'hizli_tuket') {
-        // CSRF Kontrolü (hem token hem csrf_token kabul)
+        // CSRF Kontrolü
         $token = $_GET['token'] ?? $_GET['csrf_token'] ?? '';
         if (!isset($_SESSION['csrf_token']) || $token !== $_SESSION['csrf_token']) {
             echo json_encode(['success' => false, 'error' => 'Güvenlik hatası (CSRF). Sayfayı yenileyin.']);
@@ -88,7 +150,6 @@ try {
 
         $pdo->beginTransaction();
 
-        // Ürün bilgisini kilitleyerek al
         $stmtInfo = $pdo->prepare("SELECT id, name, unit, quantity FROM products WHERE id = ? FOR UPDATE");
         $stmtInfo->execute([$id]);
         $urunInfo = $stmtInfo->fetch(PDO::FETCH_ASSOC);
@@ -98,17 +159,14 @@ try {
             $yeniMiktar   = $mevcutMiktar - $adet;
 
             if ($yeniMiktar <= 0) {
-                // Stok bittiyse ürün satırını tamamen sil
                 $del = $pdo->prepare("DELETE FROM products WHERE id = ?");
                 $del->execute([$id]);
                 $yeniMiktar = 0;
             } else {
-                // Hâlâ stok varsa sadece güncelle
                 $update = $pdo->prepare("UPDATE products SET quantity = ? WHERE id = ?");
                 $update->execute([$yeniMiktar, $id]);
             }
             
-            // Audit Log
             if (function_exists('auditLog')) {
                 auditLog('TÜKETİM', "{$urunInfo['name']} ürününden {$adet} {$urunInfo['unit']} hızlı tüketildi.");
             }
@@ -130,7 +188,6 @@ try {
     
     // 7. HIZLI TRANSFER
     elseif ($islem === 'hizli_transfer') {
-        // CSRF Kontrol (hizli_tuket ile aynı mantık)
         $token = $_GET['token'] ?? $_GET['csrf_token'] ?? '';
         if (!isset($_SESSION['csrf_token']) || $token !== $_SESSION['csrf_token']) {
             echo json_encode(['success' => false, 'error' => 'Güvenlik hatası (CSRF). Sayfayı yenileyin.']);
@@ -143,8 +200,8 @@ try {
         }
 
         $amount       = isset($_GET['amount']) ? (float)$_GET['amount'] : 0;
-        $new_cab_id   = $_GET['new_cab_id'] ?? '';   // VARCHAR ID (ör: cab_...)
-        $shelf_param  = $_GET['shelf_location'] ?? ''; // Yeni raf/bölüm seçimi
+        $new_cab_id   = $_GET['new_cab_id'] ?? '';
+        $shelf_param  = $_GET['shelf_location'] ?? '';
 
         if ($amount <= 0 || empty($new_cab_id)) {
             echo json_encode(['success' => false, 'error' => 'Geçersiz miktar veya dolap seçimi.']);
@@ -154,7 +211,6 @@ try {
         $pdo->beginTransaction();
 
         try {
-            // 1. Kaynak Ürünü Çek ve Kilitle
             $stmt_current = $pdo->prepare("SELECT * FROM products WHERE id = ? FOR UPDATE");
             $stmt_current->execute([$id]);
             $urun = $stmt_current->fetch(PDO::FETCH_ASSOC);
@@ -163,7 +219,6 @@ try {
                 throw new Exception('Ürün bulunamadı.');
             }
 
-            // Aynı dolaba transferi engelle
             if ($new_cab_id === $urun['cabinet_id']) {
                 throw new Exception('Hedef dolap zaten mevcut dolap.');
             }
@@ -172,7 +227,6 @@ try {
                 throw new Exception('Yetersiz stok.');
             }
             
-            // Hedef Dolap Adını Öğren
             $stmt_cab = $pdo->prepare("SELECT name FROM cabinets WHERE id = ?");
             $stmt_cab->execute([$new_cab_id]);
             $new_cab_name = $stmt_cab->fetchColumn();
@@ -181,21 +235,17 @@ try {
                 throw new Exception('Hedef dolap bulunamadı.');
             }
 
-            // 2. KAYNAKTAN DÜŞ
             $new_source_qty = (float)$urun['quantity'] - $amount;
 
             if ($new_source_qty <= 0) {
-                // Kaynak dolaptaki stok tamamen bittiyse bu satırı sil
                 $delSrc = $pdo->prepare("DELETE FROM products WHERE id = ?");
                 $delSrc->execute([$id]);
                 $new_source_qty = 0;
             } else {
-                // Hâlâ stok varsa güncelle
                 $update_src = $pdo->prepare("UPDATE products SET quantity = ? WHERE id = ?");
                 $update_src->execute([$new_source_qty, $id]);
             }
 
-            // 3. HEDEFİ KONTROL ET
             $checkSql = "SELECT id FROM products 
                          WHERE cabinet_id = ? 
                            AND name = ? 
@@ -212,17 +262,14 @@ try {
             ]);
             $existingProduct = $checkStmt->fetch(PDO::FETCH_ASSOC);
 
-            // Hedef raf bilgisini belirle (boşsa kaynaktaki rafa düşsün)
             $target_shelf = $shelf_param !== '' 
                 ? $shelf_param 
                 : ($urun['shelf_location'] ?? null);
 
             if ($existingProduct) {
-                // VARSA: Hedef ürüne ekle (rafını değiştirmiyoruz)
                 $update_dest = $pdo->prepare("UPDATE products SET quantity = quantity + ? WHERE id = ?");
                 $update_dest->execute([$amount, $existingProduct['id']]);
             } else {
-                // YOKSA: Yeni Satır Oluştur
                 $insertSql = "INSERT INTO products (
                         id, cabinet_id, shelf_location, 
                         name, brand, product_type, weight_volume, 
@@ -231,7 +278,6 @@ try {
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
                 
                 $stmtIns = $pdo->prepare($insertSql);
-
                 $newId = uniqid('prod_');
 
                 $stmtIns->execute([
@@ -280,3 +326,4 @@ try {
 } catch (PDOException $e) {
     echo json_encode(['success' => false, 'error' => 'Veritabanı hatası: ' . $e->getMessage()]);
 }
+?>
