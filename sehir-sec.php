@@ -2,15 +2,32 @@
 require 'db.php';
 girisKontrol();
 
-// CSP Nonce (Güvenlik için db.php'den gelmeli)
+// CSP Nonce
 if (!isset($cspNonce)) { $cspNonce = ''; }
 
-// Şehir Seçim İşlemi
+$userId = $_SESSION['user_id'];
+$userRole = $_SESSION['role'];
+
+// --- 1. Şehir Seçim İşlemi (GÜVENLİK GÜNCELLENDİ) ---
 if (isset($_GET['sec'])) {
     $sehirId = $_GET['sec'];
-    // Güvenlik: Kullanıcının seçtiği ID gerçekten veritabanında var mı?
-    $stmt = $pdo->prepare("SELECT name FROM cities WHERE id = ?");
-    $stmt->execute([$sehirId]);
+    
+    // Kullanıcı bu şehre erişebilir mi?
+    if ($userRole === 'ADMIN') {
+        // Admin her şehri seçebilir
+        $stmt = $pdo->prepare("SELECT name FROM cities WHERE id = ?");
+        $stmt->execute([$sehirId]);
+    } else {
+        // Normal kullanıcı sadece atandığı şehri seçebilir
+        $stmt = $pdo->prepare("
+            SELECT c.name 
+            FROM cities c 
+            JOIN user_city_assignments uca ON c.id = uca.city_id 
+            WHERE c.id = ? AND uca.user_id = ?
+        ");
+        $stmt->execute([$sehirId, $userId]);
+    }
+
     $sehir = $stmt->fetch();
 
     if ($sehir) {
@@ -18,18 +35,37 @@ if (isset($_GET['sec'])) {
         $_SESSION['aktif_sehir_ad'] = $sehir['name'];
         header("Location: index.php");
         exit;
+    } else {
+        // Yetkisiz erişim denemesi
+        die("Bu şehre erişim yetkiniz yok.");
     }
 }
 
-// Tüm şehirleri görmek istiyorsa
+// --- 2. Tüm şehirleri görmek (SADECE ADMIN) ---
 if (isset($_GET['hepsi'])) {
-    unset($_SESSION['aktif_sehir_id']);
-    unset($_SESSION['aktif_sehir_ad']);
-    header("Location: index.php");
-    exit;
+    if ($userRole === 'ADMIN') {
+        unset($_SESSION['aktif_sehir_id']);
+        unset($_SESSION['aktif_sehir_ad']);
+        header("Location: index.php");
+        exit;
+    }
 }
 
-$sehirler = $pdo->query("SELECT * FROM cities ORDER BY name ASC")->fetchAll();
+// --- 3. Listelenecek Şehirleri Çek ---
+if ($userRole === 'ADMIN') {
+    // Admin hepsini görür
+    $sehirler = $pdo->query("SELECT * FROM cities ORDER BY name ASC")->fetchAll();
+} else {
+    // Kullanıcı sadece yetkili olduklarını görür
+    $stmt = $pdo->prepare("
+        SELECT c.* FROM cities c 
+        JOIN user_city_assignments uca ON c.id = uca.city_id 
+        WHERE uca.user_id = ? 
+        ORDER BY c.name ASC
+    ");
+    $stmt->execute([$userId]);
+    $sehirler = $stmt->fetchAll();
+}
 ?>
 <!DOCTYPE html>
 <html lang="tr" class="light">
@@ -38,7 +74,6 @@ $sehirler = $pdo->query("SELECT * FROM cities ORDER BY name ASC")->fetchAll();
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Şehir Seç - StokTakip</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    
     <script nonce="<?= $cspNonce ?>">
         tailwind.config = { darkMode: 'class' };
         if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -58,16 +93,20 @@ $sehirler = $pdo->query("SELECT * FROM cities ORDER BY name ASC")->fetchAll();
 
     <div class="text-center mb-8">
         <h1 class="text-4xl font-bold text-slate-800 dark:text-white mb-2">Hoş Geldiniz, <?= htmlspecialchars($_SESSION['username']) ?> 👋</h1>
-        <p class="text-slate-500 dark:text-slate-400">İşlem yapmak istediğiniz konumu seçiniz.</p>
+        <p class="text-slate-500 dark:text-slate-400">
+            <?= empty($sehirler) && $userRole !== 'ADMIN' ? 'Size atanmış bir şehir bulunamadı. Lütfen yöneticiyle görüşün.' : 'İşlem yapmak istediğiniz konumu seçiniz.' ?>
+        </p>
     </div>
 
     <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 max-w-4xl w-full px-4">
         
+        <?php if($userRole === 'ADMIN'): ?>
         <a href="?hepsi=1" class="group bg-gradient-to-br from-blue-500 to-indigo-600 p-6 rounded-2xl shadow-lg hover:shadow-2xl transform hover:-translate-y-1 transition text-white text-center flex flex-col items-center justify-center h-40">
             <span class="text-4xl mb-2 transition transform group-hover:scale-110">🌍</span>
             <span class="font-bold text-lg">Tüm Şehirler</span>
-            <span class="text-xs opacity-75 mt-1">Genel Yönetim</span>
+            <span class="text-xs opacity-75 mt-1">Yönetici Erişimi</span>
         </a>
+        <?php endif; ?>
 
         <?php foreach($sehirler as $s): ?>
         <a href="?sec=<?= $s['id'] ?>" class="group bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-md hover:shadow-xl border border-slate-200 dark:border-slate-700 transform hover:-translate-y-1 transition flex flex-col items-center justify-center h-40">
@@ -83,6 +122,7 @@ $sehirler = $pdo->query("SELECT * FROM cities ORDER BY name ASC")->fetchAll();
     </div>
 
     <script nonce="<?= $cspNonce ?>">
+        // ... (Mevcut dark mode JS kodları aynen kalsın) ...
         var themeToggleDarkIcon = document.getElementById('theme-toggle-dark-icon');
         var themeToggleLightIcon = document.getElementById('theme-toggle-light-icon');
         if (document.documentElement.classList.contains('dark')) {
