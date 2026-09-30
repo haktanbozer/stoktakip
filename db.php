@@ -282,7 +282,7 @@ if (!headers_sent()) {
                  "form-action 'self'; " . 
                  "script-src 'self' 'unsafe-eval' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.datatables.net https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com 'nonce-{$cspNonce}'; " .
                  "style-src 'self' 'unsafe-inline' https://cdn.datatables.net https://cdn.jsdelivr.net; " .
-                 "img-src 'self' data: blob:; " .
+                 "img-src 'self' data: blob: https://cdn-icons-png.flaticon.com; " .
                  "media-src 'self' blob:; " .
                  "worker-src 'self' blob:; " .
                  "font-src 'self' https://cdnjs.cloudflare.com; " .
