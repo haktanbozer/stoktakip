@@ -1,60 +1,90 @@
-# ----------------------------------------------------------------------
-# 1. HTTPS YÖNLENDİRMESİ (EN ÜSTTE OLMALI)
-# ----------------------------------------------------------------------
-<IfModule mod_rewrite.c>
-    RewriteEngine On
-    # Eğer HTTPS değilse, hemen HTTPS'e yönlendir (301 Kalıcı Yönlendirme)
-    RewriteCond %{HTTPS} off
-    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+<IfModule mod_headers.c>
+    Header always unset Permissions-Policy
+    Header unset Permissions-Policy
+    Header set Permissions-Policy "camera=(self)"
 </IfModule>
-
 # ----------------------------------------------------------------------
-# 2. TEMEL GÜVENLİK VE GİZLİLİK
+# 1. TEMEL SUNUCU AYARLARI VE HATA YÖNLENDİRMELERİ
 # ----------------------------------------------------------------------
 
 # Dizin listelemeyi kapat (Klasör içeriği görünmesin)
 Options -Indexes
 
-# Hassas dosyalara erişimi engelle
-<FilesMatch "^\.env|^\.git|^\.htaccess|composer\.json|composer\.lock">
-    Order allow,deny
-    Deny from all
+# Varsayılan Karakter Seti
+AddDefaultCharset UTF-8
+
+# Sunucu Hata Sayfalarını Uygulamaya Yönlendir
+ErrorDocument 403 error.php
+ErrorDocument 404 index.php
+
+# ----------------------------------------------------------------------
+# 2. HASSAS DOSYALARA ERİŞİMİ ENGELLE
+# ----------------------------------------------------------------------
+
+# .env, .git, .htaccess, yedekler, SQL ve log uzantılarını dışarıya tamamen kilitle
+<FilesMatch "(^\.env|^\.git|^\.htaccess|composer\.(json|lock)|\.(sql|log|bak|config|ini|sh))$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
 </FilesMatch>
 
-# Log ve Session klasörlerini koru
-RewriteRule ^logs/ - [F,L]
-RewriteRule ^sessions/ - [F,L]
-
 # ----------------------------------------------------------------------
-# 3. HTTP BAŞLIKLARI (DİĞERLERİ PHP'DEN GÖNDERİLİYOR)
+# 3. URL YÖNLENDİRMELERİ (REWRITE ENGINE)
 # ----------------------------------------------------------------------
 
-<IfModule mod_headers.c>
-    # Not: CSP, HSTS, X-Frame-Options vb. güvenlik başlıkları 
-    # artık db.php üzerinden (Nonce desteği için) gönderilmektedir.
-    
-    # Arama Motorlarını Engelle (Tüm dosyalar için geçerli olsun)
-    Header set X-Robots-Tag "noindex, nofollow"
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # A. Hassas Klasörlere (logs ve sessions) Doğrudan Web Erişimini Engelle (403 Forbidden)
+    RewriteRule ^(logs|sessions)(/.*)?$ - [F,L,NC]
+
+    # B. HTTPS Zorunlu Yönlendirme (Canlı Sunucu İse 301 İle Yönlendir)
+    RewriteCond %{HTTPS} off
+    RewriteCond %{HTTP_HOST} !=localhost
+    RewriteCond %{REMOTE_ADDR} !=127.0.0.1
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 </IfModule>
 
 # ----------------------------------------------------------------------
-# 4. PERFORMANS OPTİMİZASYONU
+# 4. HTTP GÜVENLİK VE ARAMA MOTORU BAŞLIKLARI
 # ----------------------------------------------------------------------
 
-# Gzip Sıkıştırma
+<IfModule mod_headers.c>
+    # Arama motorlarının sistemi ve verileri indekslemesini kesin olarak engelle
+    Header set X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
+    
+    # MIME-sniffing saldırılarını engelle
+    Header always set X-Content-Type-Options "nosniff"
+</IfModule>
+
+# ----------------------------------------------------------------------
+# 5. PERFORMANS VE SIKIŞTIRMA (GZIP & ÖNBELLEK)
+# ----------------------------------------------------------------------
+
+# Gzip Sıkıştırma (Metin ve kod dosyaları için)
 <IfModule mod_deflate.c>
-    AddOutputFilterByType DEFLATE text/plain text/html text/xml text/css application/xml application/javascript application/json
+    AddOutputFilterByType DEFLATE text/plain text/html text/xml text/css application/xml application/javascript application/json image/svg+xml
 </IfModule>
 
 # Tarayıcı Önbellekleme
 <IfModule mod_expires.c>
     ExpiresActive On
     ExpiresDefault "access plus 1 month"
+    
+    # Statik Varlıklar (CSS, JS, Resimler)
     ExpiresByType text/css "access plus 1 year"
     ExpiresByType application/javascript "access plus 1 year"
     ExpiresByType image/jpg "access plus 1 year"
     ExpiresByType image/jpeg "access plus 1 year"
     ExpiresByType image/png "access plus 1 year"
+    ExpiresByType image/webp "access plus 1 year"
     ExpiresByType image/svg+xml "access plus 1 year"
+    
+    # Dinamik HTML ve PHP sayfalarını önbelleğe alma
     ExpiresByType text/html "access plus 0 seconds"
 </IfModule>
