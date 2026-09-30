@@ -1,0 +1,17 @@
+{
+  "name": "Ev Depo & Stok Takip",
+  "short_name": "Stok Takip",
+  "start_url": "./index.php",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#4f46e5",
+  "description": "Evdeki ürünlerin ve takviyelerin takibi için kişisel envanter yönetimi.",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2897/2897785.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

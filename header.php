@@ -4,7 +4,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// CSP Nonce Kontrolü (Güvenlik için db.php'den gelmeli)
+// CSP Nonce Kontrolü
 if (!isset($cspNonce)) {
     $cspNonce = ''; 
 }
@@ -16,18 +16,23 @@ if (!isset($cspNonce)) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stok Takip Sistemi</title>
     
-    <!-- Tailwind CSS - Production için CDN yerine derlenmiş CSS kullanılmalı -->
+    <!-- PWA / Mobil Uygulama Destek Etiketleri -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#4f46e5">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2897/2897785.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Stok Takip">
+
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <!-- jQuery & DataTables -->
     <script src="https://code.jquery.com/jquery-3.7.0.min.js" integrity="sha256-2Pmvv0kuTBOenSvLm6bvfBSSHrUJ+3A7x6P5Ebd07/g=" crossorigin="anonymous"></script>
-
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
-    
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
-    
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.tailwindcss.min.css">
 
-    <!-- SweetAlert2 - Integrity hash kaldırıldı (CSP hatası veriyordu) -->
+    <!-- SweetAlert2 -->
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <script nonce="<?= $cspNonce ?>">
@@ -65,7 +70,7 @@ if (!isset($cspNonce)) {
         }
         .dark tr:hover { background-color: #1e293b !important; }
 
-        /* DataTables Özelleştirmeleri */
+        /* DataTables Dark Mod Düzeltmeleri */
         .dataTables_wrapper .dataTables_length select {
             background-color: #fff;
             padding-right: 2rem;
@@ -100,14 +105,13 @@ if (!isset($cspNonce)) {
             </a>
             
             <?php if(isset($_SESSION['aktif_sehir_ad'])): ?>
-                <a href="sehir-sec.php" class="bg-slate-800 text-xs px-3 py-1.5 rounded-full flex items-center gap-2 hover:bg-slate-700 transition border border-slate-700">
+                <a href="sehir-sec.php" class="bg-slate-800 text-xs px-3 py-1.5 rounded-full flex items-center gap-2 hover:bg-slate-700 transition border border-slate-700" title="Konum Değiştir">
                     📍 <?= htmlspecialchars($_SESSION['aktif_sehir_ad']) ?>
                 </a>
             <?php endif; ?>
 
             <?php 
             try {
-                // --- BİLDİRİM SORGUSU (ŞEHİR FİLTRELİ VE KONUM DETAYLI) ---
                 global $pdo; 
                 if($pdo) {
                     $sql = "SELECT n.*, 
@@ -133,27 +137,37 @@ if (!isset($cspNonce)) {
 
                     $stmt = $pdo->prepare($sql);
                     $stmt->execute($params);
-                    $bildirimler = $stmt->fetchAll();
+                    $bildirimler = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     $bildirimSayisi = count($bildirimler);
                 } else { $bildirimSayisi = 0; $bildirimler = []; }
             } catch(Exception $e) { $bildirimSayisi = 0; $bildirimler = []; }
             ?>
-            <div class="relative group mr-2">
-                <button type="button" class="relative p-2 text-slate-300 hover:text-white transition">
+
+            <!-- BİLDİRİM DROPDOWN (Click ve Hover Uyumlu) -->
+            <div class="relative mr-2">
+                <button type="button" id="notifDropdownBtn" class="relative p-2 text-slate-300 hover:text-white transition focus:outline-none">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
                     <?php if($bildirimSayisi > 0): ?>
                         <span class="absolute top-0 right-0 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full animate-pulse"><?= $bildirimSayisi ?></span>
                     <?php endif; ?>
                 </button>
-                <div class="absolute left-0 md:left-auto md:right-0 top-full mt-2 w-80 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 hidden group-hover:block z-50 overflow-hidden">
-                    <div class="bg-slate-50 dark:bg-slate-900 p-3 border-b dark:border-slate-700 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Bildirimler</div>
-                    <div class="max-h-64 overflow-y-auto custom-scrollbar">
+
+                <div id="notifDropdownMenu" class="absolute right-0 top-full mt-2 w-72 md:w-80 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 hidden z-50 overflow-hidden">
+                    <div class="bg-slate-50 dark:bg-slate-900 p-3 border-b dark:border-slate-700 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase flex justify-between items-center">
+                        <span>Bildirimler</span>
+                        <?php if($bildirimSayisi > 0): ?>
+                            <span class="text-[10px] bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 px-1.5 py-0.5 rounded font-bold"><?= $bildirimSayisi ?> Kritik</span>
+                        <?php endif; ?>
+                    </div>
+                    <div class="max-h-64 overflow-y-auto">
                         <?php if($bildirimSayisi == 0): ?>
-                            <div class="p-4 text-center text-slate-400 dark:text-slate-500 text-sm">Bu şehirde yeni bildirim yok 🎉</div>
+                            <div class="p-4 text-center text-slate-400 dark:text-slate-500 text-sm">Bu konumda yeni bildirim yok 🎉</div>
                         <?php else: ?>
-                            <?php foreach($bildirimler as $notif): ?>
-                            <div class="p-3 border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition relative group/item text-slate-800 dark:text-slate-200">
-                                <p class="text-sm font-bold"><?= htmlspecialchars($notif['urun_adi']) ?></p>
+                            <?php foreach($bildirimler as $notif): 
+                                $kalan = (int)($notif['days_remaining'] ?? 0);
+                            ?>
+                            <div class="p-3 border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition relative group/item text-slate-800 dark:text-slate-200">
+                                <p class="text-sm font-bold truncate pr-6"><?= htmlspecialchars($notif['urun_adi']) ?></p>
                                 
                                 <p class="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 mb-1 flex items-center gap-1">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
@@ -162,9 +176,15 @@ if (!isset($cspNonce)) {
                                     <?= htmlspecialchars($notif['dolap_adi'] ?? '') ?>
                                 </p>
 
-                                <p class="text-xs text-red-500 font-medium"><?= $notif['days_remaining'] ?> gün kaldı</p>
+                                <p class="text-xs font-semibold <?= $kalan <= 0 ? 'text-red-600 dark:text-red-400' : 'text-orange-500' ?>">
+                                    <?= $kalan <= 0 ? '⚠️ Süresi Geçti / Kritik Stok' : $kalan . ' gün kaldı' ?>
+                                </p>
                                 
-                                <a href="bildirim-oku.php?id=<?= $notif['id'] ?>&token=<?= $_SESSION['csrf_token'] ?? '' ?>" class="absolute right-2 top-3 text-xs bg-slate-200 dark:bg-slate-600 hover:bg-blue-500 hover:text-white px-2 py-1 rounded opacity-0 group-hover/item:opacity-100 transition">✓</a>
+                                <form method="POST" action="bildirim-oku.php" style="display:inline;margin:0">
+                                    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?? '' ?>">
+                                    <input type="hidden" name="id" value="<?= $notif['id'] ?>">
+                                    <button type="submit" class="absolute right-2 top-3 text-xs bg-slate-200 dark:bg-slate-600 hover:bg-blue-600 hover:text-white px-2 py-1 rounded transition" title="Okundu Olarak İşaretle">✓</button>
+                                </form>
                             </div>
                             <?php endforeach; ?>
                         <?php endif; ?>
@@ -173,6 +193,7 @@ if (!isset($cspNonce)) {
             </div>
         </div>
 
+        <!-- ÜST NAVİGASYON LİNKLERİ -->
         <div class="flex gap-4 text-sm items-center overflow-x-auto w-full md:w-auto pb-2 md:pb-0">
             
             <?php if(isset($_SESSION['role']) && $_SESSION['role'] === 'ADMIN'): ?>
@@ -183,6 +204,22 @@ if (!isset($cspNonce)) {
 
             <a href="index.php" class="hover:text-blue-300 transition whitespace-nowrap">Özet</a>
             <a href="envanter.php" class="hover:text-blue-300 transition whitespace-nowrap">Envanter</a>
+            <div class="flex items-center gap-2 border-l border-r border-slate-700 px-2 mx-1">
+                <a href="urun-ekle.php" class="hover:text-blue-300 transition whitespace-nowrap text-blue-400 hover:text-blue-200 font-bold flex items-center gap-1" title="Tekli Ürün Ekle">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                    Ürün Ekle
+                </a>
+                <span class="text-slate-600">|</span>
+                <a href="toplu-ekle.php" class="hover:text-blue-300 transition whitespace-nowrap text-green-400 hover:text-green-200 font-bold flex items-center gap-1" title="Toplu Ürün Ekle">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Toplu Ekle
+                </a>
+            </div>
+            
+            <a href="hizli-tuket.php" class="hover:text-red-300 transition whitespace-nowrap text-red-400 font-bold flex items-center gap-1 bg-red-400/10 px-2 py-1 rounded">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                Hızlı Tüket
+            </a>
             <a href="odalar.php" class="hover:text-blue-300 transition whitespace-nowrap">Odalar</a>
             
             <a href="tuketim-analizi.php" class="hover:text-blue-300 transition whitespace-nowrap font-bold flex items-center gap-1">
@@ -193,20 +230,22 @@ if (!isset($cspNonce)) {
             
             <span class="text-slate-600 hidden md:inline">|</span>
 
+            <!-- Tema Butonu -->
             <button id="theme-toggle" type="button" class="text-gray-400 hover:bg-gray-700 hover:text-white focus:outline-none focus:ring-2 focus:ring-gray-600 rounded-lg text-sm p-2 transition">
                 <svg id="theme-toggle-light-icon" class="hidden w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
                 <svg id="theme-toggle-dark-icon" class="hidden w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path></svg>
             </button>
             
-            <div class="hidden md:flex items-center gap-3 border-l border-slate-700 pl-4 ml-2">
-                <a href="profil.php" class="flex flex-col items-end group">
+            <!-- Kullanıcı & Çıkış Linki (Mobilde de Görünür) -->
+            <div class="flex items-center gap-3 border-l border-slate-700 pl-3 ml-1">
+                <a href="profil.php" class="hidden sm:flex flex-col items-end group" title="Profil Ayarları">
                     <span class="text-slate-300 group-hover:text-white transition capitalize text-xs font-bold"><?= htmlspecialchars($_SESSION['username'] ?? 'User') ?></span>
-                    <span class="text-[10px] text-slate-500 group-hover:text-blue-400 transition">Profili Düzenle</span>
+                    <span class="text-[10px] text-slate-500 group-hover:text-blue-400 transition">Profil</span>
                 </a>
                 
-                <a href="cikis.php" class="text-red-400 hover:text-white hover:bg-red-500 transition bg-red-500/10 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1" title="Güvenli Çıkış">
+                <a href="cikis.php" class="text-red-400 hover:text-white hover:bg-red-600 transition bg-red-500/10 px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1" title="Güvenli Çıkış">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                    Çıkış
+                    <span class="hidden sm:inline">Çıkış</span>
                 </a>
             </div>
         </div>
@@ -216,6 +255,7 @@ if (!isset($cspNonce)) {
 <div class="container mx-auto p-4 md:p-6">
 
 <script nonce="<?= $cspNonce ?>">
+    // Tema Değiştirme
     var themeToggleDarkIcon = document.getElementById('theme-toggle-dark-icon');
     var themeToggleLightIcon = document.getElementById('theme-toggle-light-icon');
 
@@ -226,7 +266,6 @@ if (!isset($cspNonce)) {
     }
 
     var themeToggleBtn = document.getElementById('theme-toggle');
-
     themeToggleBtn.addEventListener('click', function() {
         themeToggleDarkIcon.classList.toggle('hidden');
         themeToggleLightIcon.classList.toggle('hidden');
@@ -249,4 +288,30 @@ if (!isset($cspNonce)) {
             }
         }
     });
+
+    // Mobil ve Masaüstü Uyumlu Bildirim Menüsü Açma/Kapatma
+    const notifBtn = document.getElementById('notifDropdownBtn');
+    const notifMenu = document.getElementById('notifDropdownMenu');
+
+    if (notifBtn && notifMenu) {
+        notifBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            notifMenu.classList.toggle('hidden');
+        });
+
+        document.addEventListener('click', function(e) {
+            if (!notifMenu.contains(e.target) && !notifBtn.contains(e.target)) {
+                notifMenu.classList.add('hidden');
+            }
+        });
+    }
+
+    // PWA Service Worker Kaydı
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('sw.js').catch(err => {
+                console.log('SW Kayıt Hatası:', err);
+            });
+        });
+    }
 </script>

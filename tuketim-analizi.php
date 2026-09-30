@@ -2,44 +2,73 @@
 require 'db.php';
 girisKontrol();
 
-// Güvenlik: Sadece adminler veya yetkili kullanıcılar görmeli.
-// if ($_SESSION['role'] !== 'ADMIN') die("Yetkisiz erişim."); 
+// 1. Tüketim Analizi Sorgusu (Son 90 gün)
+$params = [];
+$cityWhere = "";
 
-// Tüketim Analizi Sorgusu: Son 90 gün baz alınır.
+if (isset($_SESSION['aktif_sehir_id'])) {
+    $cityWhere = " AND l.city_id = ? ";
+    $params[] = $_SESSION['aktif_sehir_id'];
+}
+
 $sql = "
 SELECT
     p.id,
     p.name,
+    p.brand,
     p.quantity,
+    p.min_quantity,
     p.unit,
     p.expiry_date,
     SUM(ch.amount) AS total_consumed_90,
-    DATEDIFF(NOW(), MIN(ch.consumed_at)) AS active_days
+    COUNT(ch.id) AS consumption_count,
+    GREATEST(DATEDIFF(NOW(), MIN(ch.consumed_at)), 1) AS active_days
 FROM products p
 JOIN consumption_history ch ON p.id = ch.product_id
+LEFT JOIN cabinets c ON p.cabinet_id = c.id
+LEFT JOIN rooms r ON c.room_id = r.id
+LEFT JOIN locations l ON r.location_id = l.id
 WHERE ch.consumed_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
-GROUP BY p.id
-HAVING active_days >= 7 -- Analiz için en az 7 gün veri olsun
+$cityWhere
+GROUP BY p.id, p.name, p.brand, p.quantity, p.min_quantity, p.unit, p.expiry_date
 ORDER BY p.name ASC
 ";
 
-$stmt = $pdo->query($sql);
-$analizler = $stmt->fetchAll();
+$stmt = $pdo->prepare($sql);
+$stmt->execute($params);
+$analizler = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $tahminEdilenler = [];
-foreach($analizler as $a) {
-    // 1. Günlük Tüketim Hızı (DCR) = Toplam Tüketim / Aktif Gün Sayısı
-    $dcr = $a['total_consumed_90'] / $a['active_days'];
-    
-    // 2. Kalan Gün Sayısı = Mevcut Miktar / DCR
+foreach ($analizler as $a) {
+    $activeDays = (int)$a['active_days'];
+    $totalConsumed = (float)$a['total_consumed_90'];
+    $currentQty = (float)$a['quantity'];
+
+    // Günlük Tüketim Hızı (DCR)
+    $dcr = $totalConsumed / $activeDays;
+
     if ($dcr > 0) {
-        $daysRemaining = $a['quantity'] / $dcr;
         $a['dcr'] = round($dcr, 3);
-        $a['days_remaining'] = ceil($daysRemaining);
-        $a['run_out_date'] = date('Y-m-d', strtotime("+$daysRemaining days"));
+
+        if ($currentQty <= 0) {
+            $a['days_remaining'] = 0;
+            $a['run_out_date'] = date('Y-m-d');
+            $a['status'] = 'depleted';
+        } else {
+            $daysRemaining = ceil($currentQty / $dcr);
+            $a['days_remaining'] = $daysRemaining;
+            $a['run_out_date'] = date('Y-m-d', strtotime("+{$daysRemaining} days"));
+            $a['status'] = ($daysRemaining <= 15) ? 'critical' : (($daysRemaining <= 30) ? 'warning' : 'safe');
+        }
+
         $tahminEdilenler[] = $a;
     }
 }
+
+// Bitiş gününe göre en acilden en uzağa sırala
+usort($tahminEdilenler, function($a, $b) {
+    return $a['days_remaining'] <=> $b['days_remaining'];
+});
 
 require 'header.php';
 ?>
@@ -48,13 +77,20 @@ require 'header.php';
     <?php require 'sidebar.php'; ?>
 
     <div class="flex-1 w-full">
-        <h2 class="text-2xl font-bold text-slate-800 dark:text-white mb-6 transition-colors">
-            📅 Tüketim Hızı Tahminleme (Son 90 Gün)
-        </h2>
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold text-slate-800 dark:text-white transition-colors">
+                📅 Tüketim Hızı & Stok Tahmini (Son 90 Gün)
+            </h2>
+            <?php if(isset($_SESSION['aktif_sehir_ad'])): ?>
+                <span class="text-xs bg-blue-100 text-blue-800 px-3 py-1 rounded-full dark:bg-blue-900 dark:text-blue-300 font-bold">
+                    <?= htmlspecialchars($_SESSION['aktif_sehir_ad']) ?>
+                </span>
+            <?php endif; ?>
+        </div>
 
         <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 transition-colors">
             <p class="text-sm text-slate-600 dark:text-slate-400 mb-4 border-b dark:border-slate-700 pb-3">
-                Aşağıdaki tablo, son 90 günlük tüketim geçmişine göre ürünlerin tahmini **tükenme tarihlerini** gösterir. (Analiz için en az 7 günlük tüketim verisi olan ürünler listelenir.)
+                Bu sayfa, son 90 gündeki kullanım verilerinize göre mutfaktaki bakliyat ve gıdaların <strong>tahmini ne zaman tükeneceğini</strong> hesaplar.
             </p>
             
             <div class="overflow-x-auto">
@@ -62,29 +98,55 @@ require 'header.php';
                     <thead class="bg-slate-50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 font-bold border-b dark:border-slate-700">
                         <tr>
                             <th class="p-3">Ürün</th>
-                            <th class="p-3 text-center">Günlük Tüketim</th>
-                            <th class="p-3 text-center">Mevcut Miktar</th>
+                            <th class="p-3 text-center">Günlük Tüketim (Ort.)</th>
+                            <th class="p-3 text-center">Mevcut Stok</th>
                             <th class="p-3">Tahmini Bitiş Tarihi</th>
-                            <th class="p-3 text-center">Kalan Gün</th>
+                            <th class="p-3 text-center">Kalan Süre</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
-                        <?php if(empty($tahminEdilenler)): ?>
-                            <tr><td colspan="5" class="p-6 text-center text-slate-500 dark:text-slate-400">Yeterli tüketim geçmişi olan ürün bulunamadı.</td></tr>
+                        <?php if (empty($tahminEdilenler)): ?>
+                            <tr>
+                                <td colspan="5" class="p-8 text-center text-slate-400 dark:text-slate-500">
+                                    <div class="text-3xl mb-2">📊</div>
+                                    Henüz analiz yapacak kadar tüketim kaydı oluşmadı. Ürün tükettikçe burası otomatik hesaplanacaktır.
+                                </td>
+                            </tr>
                         <?php else: ?>
-                            <?php foreach($tahminEdilenler as $t): 
-                                $riskRenk = $t['days_remaining'] < 30 ? 'bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300' : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300';
+                            <?php foreach ($tahminEdilenler as $t): 
+                                if ($t['status'] === 'depleted') {
+                                    $badge = 'bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300';
+                                    $metin = 'Tükendi (0 Stok)';
+                                } elseif ($t['status'] === 'critical') {
+                                    $badge = 'bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300';
+                                    $metin = $t['days_remaining'] . ' Gün Kaldı';
+                                } elseif ($t['status'] === 'warning') {
+                                    $badge = 'bg-yellow-100 dark:bg-yellow-900/50 text-yellow-700 dark:text-yellow-300';
+                                    $metin = $t['days_remaining'] . ' Gün Kaldı';
+                                } else {
+                                    $badge = 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300';
+                                    $metin = $t['days_remaining'] . ' Gün';
+                                }
                             ?>
                             <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                                <td class="p-3 font-medium text-slate-800 dark:text-slate-200"><?= htmlspecialchars($t['name']) ?></td>
-                                <td class="p-3 text-center text-slate-600 dark:text-slate-300"><?= $t['dcr'] ?> <?= $t['unit'] ?></td>
-                                <td class="p-3 text-center text-slate-600 dark:text-slate-300"><?= (float)$t['quantity'] ?> <?= $t['unit'] ?></td>
-                                <td class="p-3 font-bold text-slate-700 dark:text-slate-200">
-                                    <?= date('d.m.Y', strtotime($t['run_out_date'])) ?>
+                                <td class="p-3 font-medium text-slate-800 dark:text-slate-200">
+                                    <b><?= htmlspecialchars($t['name']) ?></b>
+                                    <?php if(!empty($t['brand'])): ?>
+                                        <span class="text-xs text-slate-400 block"><?= htmlspecialchars($t['brand']) ?></span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="p-3 text-center text-slate-600 dark:text-slate-300 font-mono">
+                                    <?= $t['dcr'] ?> <?= $t['unit'] ?>/gün
+                                </td>
+                                <td class="p-3 text-center text-slate-600 dark:text-slate-300 font-bold">
+                                    <?= (float)$t['quantity'] ?> <?= $t['unit'] ?>
+                                </td>
+                                <td class="p-3 text-slate-700 dark:text-slate-200 font-medium">
+                                    <?= ($t['status'] === 'depleted') ? '<span class="text-red-600 font-bold">Tükendi</span>' : date('d.m.Y', strtotime($t['run_out_date'])) ?>
                                 </td>
                                 <td class="p-3 text-center">
-                                    <span class="<?= $riskRenk ?> px-3 py-1 rounded text-xs font-bold">
-                                        <?= $t['days_remaining'] ?> Gün
+                                    <span class="<?= $badge ?> px-3 py-1 rounded text-xs font-bold inline-block">
+                                        <?= $metin ?>
                                     </span>
                                 </td>
                             </tr>
@@ -96,13 +158,5 @@ require 'header.php';
         </div>
     </div>
 </div>
-
-<?php 
-// Not: Sidebar linkini eklemedik. Bunu sidebar.php'ye manuel olarak ekleyebilirsin:
-/* <a href="tuketim-analizi.php" class="hover:bg-slate-800 px-4 py-3 rounded text-sm font-medium transition flex items-center gap-3">
-    ⏳ Tüketim Analizi
-</a>
-*/
-?>
 </body>
 </html>

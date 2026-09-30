@@ -1,3 +1,19 @@
+<?php
+// error.php
+require_once 'db.php';
+
+// Sadece oturumu açık admin ise son log kaydını görebilsin
+$isAdmin = isset($_SESSION['role']) && $_SESSION['role'] === 'ADMIN';
+$sonHata = '';
+
+if ($isAdmin) {
+    $logDosyasi = __DIR__ . '/logs/app_' . date('Y-m-d') . '.log';
+    if (file_exists($logDosyasi)) {
+        $satirlar = file($logDosyasi);
+        $sonHata = !empty($satirlar) ? end($satirlar) : '';
+    }
+}
+?>
 <!DOCTYPE html>
 <html lang="tr">
 <head>
@@ -15,8 +31,16 @@
         </div>
         <h1 class="text-2xl font-bold text-slate-800 dark:text-white mb-2">Beklenmedik Bir Hata</h1>
         <p class="text-slate-500 dark:text-slate-400 mb-6">
-            İşleminiz sırasında teknik bir sorun oluştu. Hata detayları sistem yöneticisine iletildi.
+            İşleminiz sırasında teknik bir sorun oluştu. Hata detayları sistem günlüğüne kaydedildi.
         </p>
+
+        <?php if ($isAdmin && !empty($sonHata)): ?>
+            <div class="mb-6 p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 rounded text-left text-xs font-mono text-red-700 dark:text-red-300 break-words">
+                <strong>Hata Özeti (Yalnızca Yönetici Görür):</strong><br>
+                <?= htmlspecialchars($sonHata) ?>
+            </div>
+        <?php endif; ?>
+
         <div class="flex gap-4 justify-center">
             <a href="index.php" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition">
                 Ana Sayfaya Dön

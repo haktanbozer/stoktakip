@@ -43,7 +43,8 @@ if (!empty($_GET['filter_location_id'])) { $sql .= " AND l.id = ?"; $params[] = 
 if (!empty($_GET['filter_room_id'])) { $sql .= " AND r.id = ?"; $params[] = $_GET['filter_room_id']; }
 if (!empty($_GET['filter_cabinet_id'])) { $sql .= " AND c.id = ?"; $params[] = $_GET['filter_cabinet_id']; }
 
-$sql .= " ORDER BY (p.expiry_date IS NULL), p.expiry_date ASC";
+// Önce tarihi olanlar (en acil/en yakın olanlar en üstte), en sona süresizler (NULL)
+$sql .= " ORDER BY (p.expiry_date IS NULL) ASC, p.expiry_date ASC";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
@@ -53,11 +54,27 @@ $tumUrunler = $stmt->fetchAll();
 $kategoriler = $pdo->query("SELECT DISTINCT category FROM products")->fetchAll(PDO::FETCH_COLUMN);
 
 // Transfer Modal Verileri
-$cityCond = isset($_SESSION['aktif_sehir_id']) ? "AND l.city_id = '" . $_SESSION['aktif_sehir_id'] . "'" : "";
+// B1: String interpolasyon yerine prepared statement — SQL injection koruması
+$cityParam   = $_SESSION['aktif_sehir_id'] ?? null;
 $sehirler_tr = $pdo->query("SELECT id, name FROM cities ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$mekanlar_tr = $pdo->query("SELECT l.id, l.name, l.city_id FROM locations l LEFT JOIN cities c ON l.city_id = c.id WHERE 1=1 $cityCond ORDER BY l.name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$odalar_tr   = $pdo->query("SELECT r.id, r.name, r.location_id FROM rooms r JOIN locations l ON r.location_id = l.id WHERE 1=1 $cityCond ORDER BY r.name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$dolaplar_tr = $pdo->query("SELECT c.id, c.name, c.room_id FROM cabinets c JOIN rooms r ON c.room_id = r.id JOIN locations l ON r.location_id = l.id WHERE 1=1 $cityCond ORDER BY c.name ASC")->fetchAll(PDO::FETCH_ASSOC);
+
+if ($cityParam) {
+    $stmtL = $pdo->prepare("SELECT l.id, l.name, l.city_id FROM locations l LEFT JOIN cities c ON l.city_id = c.id WHERE l.city_id = ? ORDER BY l.name ASC");
+    $stmtL->execute([$cityParam]);
+    $mekanlar_tr = $stmtL->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmtR = $pdo->prepare("SELECT r.id, r.name, r.location_id FROM rooms r JOIN locations l ON r.location_id = l.id WHERE l.city_id = ? ORDER BY r.name ASC");
+    $stmtR->execute([$cityParam]);
+    $odalar_tr = $stmtR->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmtC = $pdo->prepare("SELECT c.id, c.name, c.room_id FROM cabinets c JOIN rooms r ON c.room_id = r.id JOIN locations l ON r.location_id = l.id WHERE l.city_id = ? ORDER BY c.name ASC");
+    $stmtC->execute([$cityParam]);
+    $dolaplar_tr = $stmtC->fetchAll(PDO::FETCH_ASSOC);
+} else {
+    $mekanlar_tr = $pdo->query("SELECT l.id, l.name, l.city_id FROM locations l LEFT JOIN cities c ON l.city_id = c.id ORDER BY l.name ASC")->fetchAll(PDO::FETCH_ASSOC);
+    $odalar_tr   = $pdo->query("SELECT r.id, r.name, r.location_id FROM rooms r JOIN locations l ON r.location_id = l.id ORDER BY r.name ASC")->fetchAll(PDO::FETCH_ASSOC);
+    $dolaplar_tr = $pdo->query("SELECT c.id, c.name, c.room_id FROM cabinets c JOIN rooms r ON c.room_id = r.id JOIN locations l ON r.location_id = l.id ORDER BY c.name ASC")->fetchAll(PDO::FETCH_ASSOC);
+}
 
 require 'header.php';
 ?>
@@ -75,10 +92,23 @@ require 'header.php';
             </span>
         <?php endif; ?>
     </h2>
-    
-    <a href="urun-ekle.php" class="hidden md:flex bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition items-center gap-2 shadow-lg shadow-blue-500/30 text-sm font-bold">
-        + Yeni Ürün
-    </a>
+    <div class="flex items-center gap-2 flex-wrap justify-end">
+        <a href="excel-export.php" class="bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 px-3 py-2 rounded-lg transition items-center gap-2 flex text-sm font-bold border border-slate-200 dark:border-slate-600 shadow-sm" title="Envanteri İndir (CSV)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span class="hidden md:inline">İndir</span>
+        </a>
+        <a href="excel-import.php" class="bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 px-3 py-2 rounded-lg transition items-center gap-2 flex text-sm font-bold border border-slate-200 dark:border-slate-600 shadow-sm" title="Excel'den Yükle">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span class="hidden md:inline">Yükle</span>
+        </a>
+        <a href="urun-ekle.php" class="hidden md:flex bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition items-center gap-2 shadow-lg shadow-blue-500/30 text-sm font-bold">
+            + Yeni Ürün
+        </a>
+        <a href="toplu-ekle.php" class="hidden md:flex bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition items-center gap-2 shadow-lg shadow-green-500/30 text-sm font-bold">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Toplu Ekle
+        </a>
+    </div>
 </div>
 
 <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 mb-6 transition-colors overflow-hidden">
@@ -169,14 +199,16 @@ require 'header.php';
             </tr>
         </thead>
         <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
-        <?php foreach($tumUrunler as $urun): 
+        <?php foreach($tumUrunler as$urun): 
             $durumHtml = hesaplaDurum($urun);
+            // Sıralama için sayısal değer: Süresizler en sona (2147483647), olanlar timestamp
+            $orderTimestamp = !empty($urun['expiry_date']) ? strtotime($urun['expiry_date']) : 2147483647;
         ?>
             <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                 <td class="px-4 py-3"><?= $durumHtml['badge'] ?></td>
                 <td class="px-4 py-3">
                     <div class="font-bold text-slate-800 dark:text-slate-200"><?= htmlspecialchars($urun['name']) ?></div>
-                    <div class="text-xs text-slate-400"><?= htmlspecialchars($urun['brand']) ?></div>
+                    <div class="text-xs text-slate-400"><?= htmlspecialchars($urun['brand'] ?? '') ?></div>
                     <div class="text-[10px] text-blue-500 dark:text-blue-400 mt-1">
                         <?= htmlspecialchars($urun['category']) ?>
                     </div>
@@ -188,11 +220,11 @@ require 'header.php';
                 <td class="px-4 py-3">
                     <div class="flex items-center gap-2">
                         <button type="button" class="btn-tuket w-6 h-6 rounded bg-red-100 text-red-600 hover:bg-red-500 hover:text-white flex items-center justify-center font-bold" data-id="<?= $urun['id'] ?>">-</button>
-                        <span id="qty_desk_<?= $urun['id'] ?>" class="font-bold"><?= (float)$urun['quantity'] . ' ' . $urun['unit'] ?></span>
+                        <span id="qty_desk_<?= $urun['id'] ?>" class="font-bold"><?= (float)$urun['quantity'] . ' ' .$urun['unit'] ?></span>
                         <button type="button" class="btn-transfer w-6 h-6 rounded bg-blue-100 text-blue-600 hover:bg-blue-500 hover:text-white flex items-center justify-center font-bold" data-json='<?= json_encode($urun) ?>'>⇄</button>
                     </div>
                 </td>
-                <td class="px-4 py-3" data-order="<?= strtotime($urun['expiry_date'] ?? '2099-01-01') ?>">
+                <td class="px-4 py-3" data-order="<?= $orderTimestamp ?>">
                     <?= $durumHtml['tarih'] ?>
                 </td>
                 <td class="px-4 py-3 text-right">
@@ -209,15 +241,14 @@ require 'header.php';
     </table>
 </div>
 
-<div class="md:hidden space-y-4 pb-20"> <?php if(empty($tumUrunler)): ?>
+<div class="md:hidden space-y-4 pb-20"> 
+    <?php if(empty($tumUrunler)): ?>
         <div class="text-center p-8 text-slate-400 dark:text-slate-500">
             <div class="text-4xl mb-2">📦</div>
             Ürün bulunamadı.
         </div>
     <?php else: ?>
-        <?php foreach($tumUrunler as $urun): 
-            $durumHtml = hesaplaDurum($urun);
-            $cardBorder = $durumHtml['risk'] == 'expired' ? 'border-l-4 border-l-red-500' : 
+        <?php foreach($tumUrunler as $urun):$durumHtml = hesaplaDurum($urun);$cardBorder = $durumHtml['risk'] == 'expired' ? 'border-l-4 border-l-red-500' : 
                           ($durumHtml['risk'] == 'critical' ? 'border-l-4 border-l-orange-500' : 'border-l-4 border-l-green-500');
         ?>
         <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-4 relative <?= $cardBorder ?>">
@@ -227,7 +258,7 @@ require 'header.php';
                     <h3 class="font-bold text-slate-800 dark:text-white text-lg leading-tight">
                         <?= htmlspecialchars($urun['name']) ?>
                     </h3>
-                    <?php if($urun['brand']): ?>
+                    <?php if(!empty($urun['brand'])): ?>
                         <p class="text-xs text-slate-500 dark:text-slate-400 font-medium"><?= htmlspecialchars($urun['brand']) ?></p>
                     <?php endif; ?>
                 </div>
@@ -326,7 +357,6 @@ require 'header.php';
 </div>
 
 <?php
-// PHP Yardımcı Fonksiyon: Durum HTML'ini hazırlar
 function hesaplaDurum($urun) {
     if (empty($urun['expiry_date'])) {
         return [
@@ -337,22 +367,17 @@ function hesaplaDurum($urun) {
         ];
     }
     
-    $bugun = time();
-    $skt = strtotime($urun['expiry_date']);
-    $fark = ceil(($skt - $bugun) / 86400);
-    $tarihYazi = date('d.m.Y', $skt);
+    $bugun = strtotime('today');$skt = strtotime($urun['expiry_date']);$fark = (int)round(($skt -$bugun) / 86400);
+    $tarihYazi = date('d.m.Y',$skt);
     
-    if ($fark < 0) {
-        $badge = '<span class="bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Geçmiş</span>';
+    if ($fark < 0) {$badge = '<span class="bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Geçmiş</span>';
         $kisa = "<span class='text-red-600 font-bold'>$tarihYazi (" . abs($fark) . " gün geçti)</span>";
         $risk = 'expired';
-    } elseif ($fark <= 7) {
-        $badge = '<span class="bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Kritik</span>';
+    } elseif ($fark <= 7) {$badge = '<span class="bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Kritik</span>';
         $kisa = "<span class='text-orange-600 font-bold'>$tarihYazi ($fark gün kaldı)</span>";
         $risk = 'critical';
-    } elseif ($fark <= 30) {
-        $badge = '<span class="bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Yakın</span>';
-        $kisa = "<span class='text-yellow-600'>$tarihYazi ($fark gün)</span>";
+    } elseif ($fark <= 30) {$badge = '<span class="bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Yakın</span>';
+        $kisa = "<span class='text-yellow-600 font-medium'>$tarihYazi ($fark gün)</span>";
         $risk = 'warning';
     } else {
         $badge = '<span class="bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Güvenli</span>';
@@ -370,7 +395,6 @@ function hesaplaDurum($urun) {
 <script src="https://cdn.datatables.net/1.13.6/js/dataTables.tailwindcss.min.js"></script>
 
 <script nonce="<?= $cspNonce ?>">
-// Veriler (Transfer Modalı İçin)
 const DATA_CITIES = <?= json_encode($sehirler_tr) ?>;
 const DATA_LOCS   = <?= json_encode($mekanlar_tr) ?>;
 const DATA_ROOMS  = <?= json_encode($odalar_tr) ?>;
@@ -384,21 +408,19 @@ $(document).ready(function() {
             "language": { "url": "//cdn.datatables.net/plug-ins/1.13.6/i18n/tr.json" },
             "pageLength": 25,
             "responsive": true,
-            "columnDefs": [{ "orderable": false, "targets": 5 }]
+            // 4. indeks (SKT sütununa) göre küçükten büyüğe otomatik sırala
+            "order": [[4, 'asc']],
+            "columnDefs": [
+                { "orderable": false, "targets": 5 }
+            ]
         });
     }
 
-    // Filtrelemede select değişimleri
     $('#filter_location').change(function(){ updateFilters(this.value, 'room'); });
     $('#filter_room').change(function(){ updateFilters(this.value, 'cabinet'); });
 
-    // Buton İşlevleri (Event Delegation - Hem Masaüstü Hem Mobil İçin)
-    $(document).on('click', '.btn-tuket', function() { hizliTuket(this, $(this).data('id')); });
-    
-    $(document).on('click', '.btn-transfer', function() {
-        // Data attribute'undan tüm json verisini al
+    $(document).on('click', '.btn-tuket', function() { hizliTuket(this, $(this).data('id')); });$(document).on('click', '.btn-transfer', function() {
         const u = $(this).data('json'); 
-        // u.id, u.quantity, u.unit, u.name, u.city_id...
         transferDialog(u.id, u.quantity, u.unit, u.name, u.city_id, u.location_id, u.room_id, u.cabinet_id);
     });
 
@@ -412,13 +434,10 @@ $(document).ready(function() {
         }).then((res) => { if(res.isConfirmed) form.submit(); });
     });
 
-    // Transfer Modal Eventleri
     $('#btnTransferCancel').click(closeModal);
     $('#btnTransferSubmit').click(submitTransfer);
     $('#targetCabinet').change(function(){ loadTargetShelves(this.value); });
 });
-
-// --- Fonksiyonlar ---
 
 function updateFilters(parentId, targetType) {
     let targetEl = targetType === 'room' ? $('#filter_room') : $('#filter_cabinet');
@@ -426,13 +445,12 @@ function updateFilters(parentId, targetType) {
     let matchKey = targetType === 'room' ? 'location_id' : 'room_id';
     
     targetEl.html('<option value="">Tümü</option>');
-    if(targetType === 'room') $('#filter_cabinet').html('<option value="">Tümü</option>'); // Alt zinciri temizle
+    if(targetType === 'room') $('#filter_cabinet').html('<option value="">Tümü</option>');
 
     if(parentId) {
         let filtered = sourceData.filter(x => x[matchKey] == parentId);
         filtered.forEach(x => targetEl.append(`<option value="${x.id}">${x.name}</option>`));
     } else {
-        // Hepsi seçiliyse hepsini göster
         sourceData.forEach(x => targetEl.append(`<option value="${x.id}">${x.name}</option>`));
     }
 }
@@ -450,7 +468,6 @@ async function hizliTuket(btn, id) {
             const res = await fetch(`ajax.php?islem=hizli_tuket&id=${id}&adet=${adet}&csrf_token=${CSRF_TOKEN}`);
             const data = await res.json();
             if (data.success) {
-                // Hem masaüstü hem mobil etiketlerini güncelle
                 $(`#qty_desk_${id}`).text(`${parseFloat(data.yeni_miktar)} ${data.birim}`);
                 $(`#qty_mob_${id}`).html(`${parseFloat(data.yeni_miktar)} <span class="text-xs font-normal">${data.birim}</span>`);
                 
@@ -463,24 +480,20 @@ async function hizliTuket(btn, id) {
     }
 }
 
-// Transfer Mantığı (Mevcut kodun aynısı, sadece veri doldurma kısmı dinamik)
 function transferDialog(pid, qty, unit, pname, city, loc, room, cab) {
     $('#modalProductId').val(pid);
     $('#modalProductName').text(pname);
     $('#transferAmount').val(qty).attr('max', qty);
     $('#maxQtyText').text(`${qty} ${unit}`);
     
-    // Konum metni
     let cName = (DATA_CITIES.find(x=>x.id==city)||{}).name || '-';
     let lName = (DATA_LOCS.find(x=>x.id==loc)||{}).name || '-';
     let rName = (DATA_ROOMS.find(x=>x.id==room)||{}).name || '-';
     $('#currentLocationText').html(`${cName} &rsaquo; ${lName} &rsaquo; ${rName}`);
 
-    // Selectleri Doldur
     fillSelect('targetCity', DATA_CITIES, city);
-    updateModalSelects(city, loc, room); // Zincirleme doldur
+    updateModalSelects(city, loc, room);
 
-    // Eventler (Zincirleme)
     $('#targetCity').off('change').on('change', function(){ updateModalSelects(this.value, null, null); });
     $('#targetLocation').off('change').on('change', function(){ updateModalSelects($('#targetCity').val(), this.value, null); });
     $('#targetRoom').off('change').on('change', function(){ updateModalSelects($('#targetCity').val(), $('#targetLocation').val(), this.value); });

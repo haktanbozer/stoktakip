@@ -2,34 +2,40 @@
 require 'db.php';
 girisKontrol();
 
-if ($_SESSION['role'] !== 'ADMIN') die("Yetkisiz erişim.");
+// Güvenlik & Yetki Kontrolü (Loglu)
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'ADMIN') {
+    if (function_exists('sistemLogla')) {
+        $ip =$_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        $user =$_SESSION['username'] ?? 'Bilinmeyen';
+        sistemLogla("Yetkisiz Sayfa Erişimi Engellendi: kategoriler.php (Kullanıcı: $user, IP:$ip)", 'SECURITY');
+    }
+    header("Location: index.php?hata=yetkisiz");
+    exit;
+}
 
 // CSP Nonce Kontrolü
-if (!isset($cspNonce)) { $cspNonce = ''; }
+if (!isset($cspNonce)) {$cspNonce = ''; }
 
 // --- TÜRKÇE SIRALAMA FONKSİYONU ---
-// Bu fonksiyon, sunucu ayarlarından bağımsız olarak Türkçe karakterleri (ç,ğ,ı,ö,ş,ü) doğru sıralar.
 function turkceSirala(&$array) {
     if (class_exists('Collator')) {
         $collator = new Collator('tr_TR');
         $collator->sort($array);
     } else {
-        usort($array, function($a, $b) {
-            $tr_map = [
+        usort($array, function($a, $b) {$tr_map = [
                 'ç' => 'c1', 'Ç' => 'C1', 'ğ' => 'g1', 'Ğ' => 'G1',
                 'ı' => 'h1', 'I' => 'H1', 'i' => 'h2', 'İ' => 'H2',
                 'ö' => 'o1', 'Ö' => 'O1', 'ş' => 's1', 'Ş' => 'S1',
                 'ü' => 'u1', 'Ü' => 'U1'
             ];
-            $transA = strtr(mb_strtolower($a, 'UTF-8'), $tr_map);
-            $transB = strtr(mb_strtolower($b, 'UTF-8'), $tr_map);
-            return strcmp($transA, $transB);
+            $transA = strtr(mb_strtolower($a, 'UTF-8'), $tr_map);$transB = strtr(mb_strtolower($b, 'UTF-8'),$tr_map);
+            return strcmp($transA,$transB);
         });
     }
 }
 
 $mesaj = '';
-$duzenleModu = false;
+$mesajTuru = 'info';$duzenleModu = false;
 $duzenlenecekKat = null;
 
 // --- POST İŞLEMLERİ ---
@@ -39,97 +45,148 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // 1. YENİ ANA KATEGORİ EKLEME
     if (isset($_POST['yeni_ana_kategori'])) {
         $isim = trim($_POST['ana_kategori_adi']);
-        if (!empty($isim)) {
-            $id = uniqid('cat_');
-            $stmt = $pdo->prepare("INSERT INTO categories (id, name, sub_categories) VALUES (?, ?, ?)");
-            try {
-                $stmt->execute([$id, $isim, '']);
-                $mesaj = "✅ Ana kategori oluşturuldu: $isim";
-            } catch(PDOException $e) { 
-                $mesaj = "❌ Hata: " . $e->getMessage(); 
+        if (empty($isim)) {$mesaj = "Kategori adı boş bırakılamaz.";
+            $mesajTuru = 'error';
+        } else {
+            $check =$pdo->prepare("SELECT COUNT(*) FROM categories WHERE name = ?");
+            $check->execute([$isim]);
+            if ($check->fetchColumn() > 0) {$mesaj = "Bu isimde bir kategori zaten mevcut.";
+                $mesajTuru = 'error';
+            } else {
+                $id = uniqid('cat_');
+                $stmt =$pdo->prepare("INSERT INTO categories (id, name, sub_categories) VALUES (?, ?, ?)");
+                try {
+                    $stmt->execute([$id,$isim, '']);
+                    if (function_exists('auditLog')) auditLog('EKLEME', "Yeni kategori eklendi: $isim");
+                    $mesaj = "Ana kategori oluşturuldu: $isim";
+                    $mesajTuru = 'success';
+                } catch(PDOException $e) {$mesaj = "Hata: " . $e->getMessage();$mesajTuru = 'error';
+                    if (function_exists('sistemLogla')) sistemLogla("Kategori Ekleme Hatası: " . $e->getMessage());
+                }
             }
         }
     }
 
-    // 2. MEVCUT KATEGORİYE ALT KATEGORİ EKLEME
+    // 2. MEVCUT KATEGORİYE HIZLI ALT KATEGORİ EKLEME
     elseif (isset($_POST['hizli_alt_ekle'])) {
-        $catId = $_POST['parent_id'];
+        $catId =$_POST['parent_id'];
         $yeniAlt = trim($_POST['yeni_alt_kategori']);
 
         if (!empty($catId) && !empty($yeniAlt)) {
-            // Önce mevcut alt kategorileri çek
-            $stmt = $pdo->prepare("SELECT sub_categories FROM categories WHERE id = ?");
+            $stmt =$pdo->prepare("SELECT name, sub_categories FROM categories WHERE id = ?");
             $stmt->execute([$catId]);
-            $mevcutString = $stmt->fetchColumn();
+            $catData =$stmt->fetch(PDO::FETCH_ASSOC);
 
-            // String'i diziye çevir
-            $mevcutDizi = array_filter(explode(',', $mevcutString));
-            
-            // Eğer aynı isimde yoksa ekle
-            if (!in_array($yeniAlt, $mevcutDizi)) {
-                $mevcutDizi[] = $yeniAlt;
+            if ($catData) {
+                $mevcutDizi = array_filter(array_map('trim', explode(',',$catData['sub_categories'])));
                 
-                // --- SIRALAMA İŞLEMİ (Kaydetmeden önce) ---
-                turkceSirala($mevcutDizi);
-                
-                $yeniString = implode(',', $mevcutDizi);
-                
-                $update = $pdo->prepare("UPDATE categories SET sub_categories = ? WHERE id = ?");
-                $update->execute([$yeniString, $catId]);
-                $mesaj = "✅ Alt kategori eklendi: $yeniAlt";
-            } else {
-                $mesaj = "⚠️ Bu alt kategori zaten ekli.";
+                if (!in_array($yeniAlt,$mevcutDizi)) {
+                    $mevcutDizi[] =$yeniAlt;
+                    turkceSirala($mevcutDizi);
+                    $yeniString = implode(',',$mevcutDizi);
+                    
+                    $update =$pdo->prepare("UPDATE categories SET sub_categories = ? WHERE id = ?");
+                    $update->execute([$yeniString,$catId]);
+                    
+                    if (function_exists('auditLog')) auditLog('GÜNCELLEME', "{$catData['name']} altına yeni alt kategori eklendi: $yeniAlt");
+                    $mesaj = "Alt kategori eklendi: $yeniAlt";
+                    $mesajTuru = 'success';
+                } else {
+                    $mesaj = "Bu alt kategori zaten mevcut.";
+                    $mesajTuru = 'warning';
+                }
             }
         }
     }
 
-    // 3. DÜZENLEME MODUNDAKİ GÜNCELLEME
-    elseif (isset($_POST['guncelle'])) {
-        $subCatsString = '';
+    // 3. DÜZENLEME MODUNDAKİ GÜNCELLEME (Ürünleri de günceller)
+    elseif (isset($_POST['guncelle'])) {$id = $_POST['id'];$yeniIsim = trim($_POST['name']);$subCatsString = '';
         if (isset($_POST['alt_kat']) && is_array($_POST['alt_kat'])) {
             $doluOlanlar = array_filter($_POST['alt_kat'], function($value) { return !empty(trim($value)); });
-            
-            // --- SIRALAMA İŞLEMİ (Kaydetmeden önce) ---
+            $doluOlanlar = array_unique(array_map('trim',$doluOlanlar));
             turkceSirala($doluOlanlar);
-            
-            $subCatsString = implode(',', $doluOlanlar);
+            $subCatsString = implode(',',$doluOlanlar);
         }
-        $stmt = $pdo->prepare("UPDATE categories SET name = ?, sub_categories = ? WHERE id = ?");
-        $stmt->execute([$_POST['name'], $subCatsString, $_POST['id']]);
-        header("Location: kategoriler.php?basarili=1"); exit;
+
+        try {
+            $pdo->beginTransaction();
+
+            $stmtOld =$pdo->prepare("SELECT name FROM categories WHERE id = ?");
+            $stmtOld->execute([$id]);
+            $eskiIsim =$stmtOld->fetchColumn();
+
+            $stmt =$pdo->prepare("UPDATE categories SET name = ?, sub_categories = ? WHERE id = ?");
+            $stmt->execute([$yeniIsim, $subCatsString,$id]);
+
+            if ($eskiIsim && $eskiIsim !==$yeniIsim) {
+                $stmtProd =$pdo->prepare("UPDATE products SET category = ? WHERE category = ?");
+                $stmtProd->execute([$yeniIsim,$eskiIsim]);
+            }
+
+            $pdo->commit();
+
+            if (function_exists('auditLog')) auditLog('GÜNCELLEME', "Kategori güncellendi: $eskiIsim ->$yeniIsim");
+            header("Location: kategoriler.php?basarili=1"); 
+            exit;
+
+        } catch (PDOException $e) {
+            $pdo->rollBack();$mesaj = "Güncelleme Hatası: " . $e->getMessage();$mesajTuru = 'error';
+            if (function_exists('sistemLogla')) sistemLogla("Kategori Güncelleme Hatası: " . $e->getMessage());
+        }
     }
 
-    // 4. SİLME
+    // 4. SİLME (Ürün korumalı)
     elseif (isset($_POST['sil_id'])) {
-        $stmt = $pdo->prepare("DELETE FROM categories WHERE id = ?");
-        try {
-            $stmt->execute([$_POST['sil_id']]);
-            $mesaj = "🗑️ Kategori silindi.";
-        } catch(PDOException $e) { $mesaj = "❌ Hata: Bu kategoriye bağlı ürünler olabilir."; }
+        $silId =$_POST['sil_id'];
+
+        $stmtKat =$pdo->prepare("SELECT name FROM categories WHERE id = ?");
+        $stmtKat->execute([$silId]);
+        $katAdi =$stmtKat->fetchColumn();
+
+        if ($katAdi) {
+            $stmtSay =$pdo->prepare("SELECT COUNT(*) FROM products WHERE category = ?");
+            $stmtSay->execute([$katAdi]);
+            $urunSayisi =$stmtSay->fetchColumn();
+
+            if ($urunSayisi > 0) {$mesaj = "Bu kategori silinemez! İçinde kayıtlı {$urunSayisi} adet ürün bulunmaktadır. Önce ürünleri başka kategoriye taşıyın.";
+                $mesajTuru = 'error';
+            } else {
+                $stmt =$pdo->prepare("DELETE FROM categories WHERE id = ?");
+                $stmt->execute([$silId]);
+                if (function_exists('auditLog')) auditLog('SİLME', "Kategori silindi: $katAdi");
+                $mesaj = "Kategori silindi: $katAdi";
+                $mesajTuru = 'success';
+            }
+        }
     }
 }
 
 // Düzenleme Modu Kontrolü
 if (isset($_GET['duzenle'])) {
-    $stmt = $pdo->prepare("SELECT * FROM categories WHERE id = ?");
+    $stmt =$pdo->prepare("SELECT * FROM categories WHERE id = ?");
     $stmt->execute([$_GET['duzenle']]);
-    $duzenlenecekKat = $stmt->fetch();
-    if ($duzenlenecekKat) $duzenleModu = true;
+    $duzenlenecekKat =$stmt->fetch(PDO::FETCH_ASSOC);
+    if ($duzenlenecekKat)$duzenleModu = true;
 }
-if(isset($_GET['basarili'])) $mesaj = "✅ İşlem kaydedildi.";
 
-// Tüm kategorileri çek (Ana kategoriler SQL ile sıralı gelir)
-$kategoriler = $pdo->query("SELECT * FROM categories ORDER BY name ASC")->fetchAll();
+if (isset($_GET['basarili'])) {$mesaj = "İşlem başarıyla kaydedildi.";
+    $mesajTuru = 'success';
+}
+
+$sql = "SELECT c.*, COUNT(p.id) as urun_sayisi 
+        FROM categories c 
+        LEFT JOIN products p ON p.category = c.name 
+        GROUP BY c.id 
+        ORDER BY c.name ASC";
+$kategoriler = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 
 require 'header.php';
 ?>
 
 <div class="flex flex-col md:flex-row gap-6 items-start">
-    
     <?php require 'sidebar.php'; ?>
 
     <div class="flex-1 w-full">
-        
         <div class="flex justify-between items-center mb-6">
             <h2 class="text-2xl font-bold text-slate-800 dark:text-white transition-colors">Kategori Yönetimi</h2>
             <?php if($duzenleModu): ?>
@@ -138,13 +195,16 @@ require 'header.php';
         </div>
 
         <?php if($mesaj): ?>
-            <div class="bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 p-3 rounded mb-6 border-l-4 border-blue-500 dark:border-blue-400 transition-colors"><?= $mesaj ?></div>
+            <?php 
+                $alertRenk =$mesajTuru === 'success' 
+                    ? 'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200 border-green-500' 
+                    : ($mesajTuru === 'error' ? 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-200 border-red-500' : 'bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-200 border-yellow-500');
+            ?>
+            <div class="<?= $alertRenk ?> p-3 rounded mb-6 border-l-4 transition-colors"><?= htmlspecialchars($mesaj) ?></div>
         <?php endif; ?>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
             <div class="space-y-6">
-                
                 <?php if($duzenleModu): ?>
                     <div class="bg-orange-50 dark:bg-orange-900/20 p-6 rounded-xl shadow border border-orange-300 dark:border-orange-800 transition-colors">
                         <h3 class="font-bold text-lg mb-4 text-orange-600 dark:text-orange-400">
@@ -164,14 +224,13 @@ require 'header.php';
                                 <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2">Alt Başlıklar</label>
                                 <div id="altKategoriListesi" class="space-y-2">
                                     <?php 
-                                    // Düzenleme ekranında da sıralı göster
                                     $altlar = !empty($duzenlenecekKat['sub_categories']) ? explode(',', $duzenlenecekKat['sub_categories']) : [''];
-                                    $altlar = array_map('trim', $altlar);
+                                    $altlar = array_map('trim',$altlar);
                                     $altlar = array_filter($altlar);
-                                    turkceSirala($altlar); // SIRALA
-                                    if(empty($altlar)) $altlar = ['']; // En az bir boş kutu kalsın
+                                    turkceSirala($altlar);
+                                    if(empty($altlar))$altlar = [''];
 
-                                    foreach($altlar as $alt): 
+                                    foreach($altlar as$alt): 
                                     ?>
                                     <div class="flex gap-2 items-center grup-satir">
                                         <input type="text" name="alt_kat[]" value="<?= htmlspecialchars($alt) ?>" placeholder="Alt Kategori" class="flex-1 p-2 border rounded text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-orange-500 outline-none transition-colors">
@@ -202,7 +261,7 @@ require 'header.php';
                             
                             <div>
                                 <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Kategori Adı</label>
-                                <input type="text" name="ana_kategori_adi" placeholder="Örn: Elektronik" required class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-colors">
+                                <input type="text" name="ana_kategori_adi" placeholder="Örn: Bakliyat" required class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-colors">
                             </div>
                             
                             <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-bold transition shadow-md">
@@ -223,7 +282,7 @@ require 'header.php';
                                 <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Hangi Kategoriye Eklenecek?</label>
                                 <select name="parent_id" required class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-green-500 outline-none transition-colors">
                                     <option value="">Seçiniz...</option>
-                                    <?php foreach($kategoriler as $k): ?>
+                                    <?php foreach($kategoriler as$k): ?>
                                         <option value="<?= $k['id'] ?>"><?= htmlspecialchars($k['name']) ?></option>
                                     <?php endforeach; ?>
                                 </select>
@@ -231,7 +290,7 @@ require 'header.php';
 
                             <div>
                                 <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Yeni Alt Kategori İsmi</label>
-                                <input type="text" name="yeni_alt_kategori" placeholder="Örn: Pil" required class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-green-500 outline-none transition-colors">
+                                <input type="text" name="yeni_alt_kategori" placeholder="Örn: Mercimek" required class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-green-500 outline-none transition-colors">
                             </div>
 
                             <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded font-bold transition shadow-md">
@@ -245,26 +304,29 @@ require 'header.php';
 
             <div class="lg:col-span-2 space-y-3">
                 <h3 class="font-bold text-slate-500 dark:text-slate-400 text-sm uppercase tracking-wider mb-2">Mevcut Kategoriler</h3>
-                <?php foreach($kategoriler as $k): ?>
+                <?php foreach($kategoriler as$k): ?>
                 <div class="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex justify-between items-start group hover:border-blue-300 dark:hover:border-blue-700 transition gap-4">
                     <div>
-                        <h4 class="font-bold text-lg text-slate-800 dark:text-white"><?= htmlspecialchars($k['name']) ?></h4>
+                        <div class="flex items-center gap-2">
+                            <h4 class="font-bold text-lg text-slate-800 dark:text-white"><?= htmlspecialchars($k['name']) ?></h4>
+                            <span class="text-xs bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 px-2 py-0.5 rounded-full font-medium">
+                                <?= (int)$k['urun_sayisi'] ?> ürün
+                            </span>
+                        </div>
                         <div class="flex flex-wrap gap-1 mt-2">
                             <?php 
-                            $altCats = explode(',', $k['sub_categories']);
-                            $altCats = array_filter(array_map('trim', $altCats));
-                            
-                            // --- SIRALAMA İŞLEMİ (Listeleme anında) ---
+                            $altCats = explode(',',$k['sub_categories']);
+                            $altCats = array_filter(array_map('trim',$altCats));
                             turkceSirala($altCats);
                             
                             if(empty($altCats)) echo "<span class='text-xs text-slate-400 dark:text-slate-500 italic'>Alt kategori yok</span>";
-                            foreach($altCats as $alt) { 
+                            foreach($altCats as$alt) { 
                                 echo "<span class='bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs px-2 py-1 rounded border border-slate-200 dark:border-slate-600'>".htmlspecialchars($alt)."</span>"; 
                             } 
                             ?>
                         </div>
                     </div>
-                    <div class="flex flex-col gap-2 items-end opacity-60 group-hover:opacity-100 transition">
+                    <div class="flex flex-col gap-2 items-end opacity-75 group-hover:opacity-100 transition">
                         <a href="?duzenle=<?= $k['id'] ?>" class="text-blue-600 dark:text-blue-400 text-xs font-bold hover:underline bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded">DÜZENLE</a>
                         <form method="POST" onsubmit="return confirm('<?= htmlspecialchars($k['name']) ?> kategorisi silinsin mi?')" class="inline">
                             <?php echo csrfAlaniniEkle(); ?>
@@ -320,6 +382,5 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 <?php endif; ?>
-
 </body>
 </html>

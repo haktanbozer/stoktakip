@@ -3,16 +3,17 @@ require 'db.php';
 girisKontrol();
 
 // Sadece Admin erişebilir
-if ($_SESSION['role'] !== 'ADMIN') {
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'ADMIN') {
     die("Bu sayfaya erişim yetkiniz yok. <a href='index.php'>Panele Dön</a>");
 }
 
 $mesaj = '';
+$mesajTuru = 'info'; // info, success, error
 $duzenleModu = false;
 $duzenlenecekUser = null;
 $kullaniciSehirleri = []; 
 
-// --- TÜM ŞEHİRLERİ ÇEK (Form için) ---
+// --- TÜM ŞEHİRLERİ ÇEK ---
 $tumSehirler = $pdo->query("SELECT * FROM cities ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 // --- DÜZENLEME MODU KONTROLÜ ---
@@ -23,138 +24,181 @@ if (isset($_GET['duzenle'])) {
     
     if ($duzenlenecekUser) {
         $duzenleModu = true;
-        // Kullanıcının mevcut şehir yetkilerini çek
         $stmtSehir = $pdo->prepare("SELECT city_id FROM user_city_assignments WHERE user_id = ?");
         $stmtSehir->execute([$duzenlenecekUser['id']]);
         $kullaniciSehirleri = $stmtSehir->fetchAll(PDO::FETCH_COLUMN);
     }
 }
 
+// Yardımcı Fonksiyon: Şehir yetkilerini kaydet
+function yetkileriGuncelle($pdo, $userId, $gelenSehirler) {
+    $del = $pdo->prepare("DELETE FROM user_city_assignments WHERE user_id = ?");
+    $del->execute([$userId]);
+
+    if (!empty($gelenSehirler) && is_array($gelenSehirler)) {
+        $benzersizSehirler = array_unique($gelenSehirler);
+        $ins = $pdo->prepare("INSERT INTO user_city_assignments (user_id, city_id) VALUES (?, ?)");
+        foreach ($benzersizSehirler as $cityId) {
+            $ins->execute([$userId, $cityId]);
+        }
+    }
+}
+
 // --- POST İŞLEMLERİ ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfKontrol($_POST['csrf_token'] ?? '');
-    
-    // Yardımcı Fonksiyon: Yetkileri güncelle
-    function yetkileriGuncelle($pdo, $userId, $gelenSehirler) {
-        try {
-            // 1. Önce kullanıcının tüm eski yetkilerini sil
-            $del = $pdo->prepare("DELETE FROM user_city_assignments WHERE user_id = ?");
-            $del->execute([$userId]);
-
-            // 2. Yeni seçimleri ekle (Duplicate kontrolü yaparak)
-            if (!empty($gelenSehirler) && is_array($gelenSehirler)) {
-                // array_unique ile formdan gelen olası tekrarları engelle
-                $benzersizSehirler = array_unique($gelenSehirler);
-                
-                $ins = $pdo->prepare("INSERT INTO user_city_assignments (user_id, city_id) VALUES (?, ?)");
-                foreach ($benzersizSehirler as $cityId) {
-                    $ins->execute([$userId, $cityId]);
-                }
-            }
-        } catch (PDOException $e) {
-            // Hata olursa logla ama işlemi durdurma
-            if(function_exists('sistemLogla')) sistemLogla("Yetki Güncelleme Hatası: " . $e->getMessage());
-        }
-    }
 
     // 1. KULLANICI EKLEME
     if (isset($_POST['kullanici_ekle'])) {
         $username = trim($_POST['username']);
-        $password = $_POST['password']; 
-        $email = trim($_POST['email']);
-        $role = $_POST['role'];
+        $password = $_POST['password'] ?? ''; 
+        $email    = trim($_POST['email']);
+        $role     = in_array($_POST['role'], ['ADMIN', 'USER']) ? $_POST['role'] : 'USER';
         $secilenSehirler = $_POST['sehirler'] ?? [];
         
-        if(empty($username) || empty($password) || empty($email)) {
-            $mesaj = "❌ Lütfen tüm alanları doldurun.";
+        if (empty($username) || empty($password) || empty($email)) {
+            $mesaj = "Lütfen tüm zorunlu alanları doldurun.";
+            $mesajTuru = 'error';
+        } elseif (strlen($password) < 6) {
+            $mesaj = "Şifre en az 6 karakter olmalıdır.";
+            $mesajTuru = 'error';
+        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $mesaj = "Geçerli bir e-posta adresi giriniz.";
+            $mesajTuru = 'error';
         } else {
-            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-            $id = uniqid('user_');
+            // Benzersizlik Kontrolü
+            $stmtCheck = $pdo->prepare("SELECT COUNT(*) FROM users WHERE username = ? OR email = ?");
+            $stmtCheck->execute([$username, $email]);
+            if ($stmtCheck->fetchColumn() > 0) {
+                $mesaj = "Bu kullanıcı adı veya e-posta adresi zaten kullanımda.";
+                $mesajTuru = 'error';
+            } else {
+                $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                $id = uniqid('user_');
 
-            try {
-                $pdo->beginTransaction();
-                
-                $stmt = $pdo->prepare("INSERT INTO users (id, username, email, password, role) VALUES (?, ?, ?, ?, ?)");
-                $stmt->execute([$id, $username, $email, $hashed_password, $role]);
-                
-                // Sadece USER ise şehirleri kaydet
-                if ($role === 'USER') {
-                    yetkileriGuncelle($pdo, $id, $secilenSehirler);
+                try {
+                    $pdo->beginTransaction();
+                    $stmt = $pdo->prepare("INSERT INTO users (id, username, email, password, role) VALUES (?, ?, ?, ?, ?)");
+                    $stmt->execute([$id, $username, $email, $hashed_password, $role]);
+                    
+                    if ($role === 'USER') {
+                        yetkileriGuncelle($pdo, $id, $secilenSehirler);
+                    }
+                    $pdo->commit();
+                    
+                    if (function_exists('auditLog')) {
+                        auditLog('EKLEME', "Yeni kullanıcı eklendi: $username ($role)");
+                    }
+                    $mesaj = "Kullanıcı başarıyla kaydedildi.";
+                    $mesajTuru = 'success';
+                } catch (PDOException $e) { 
+                    $pdo->rollBack();
+                    $mesaj = "Veritabanı Hatası: " . $e->getMessage(); 
+                    $mesajTuru = 'error';
                 }
-                
-                $pdo->commit();
-                
-                if(function_exists('auditLog')) auditLog('EKLEME', "Yeni kullanıcı: $username");
-                $mesaj = "✅ Kullanıcı kaydedildi.";
-            } catch (PDOException $e) { 
-                $pdo->rollBack();
-                $mesaj = "❌ Hata: " . $e->getMessage(); 
             }
         }
     }
 
     // 2. KULLANICI GÜNCELLEME
     elseif (isset($_POST['kullanici_guncelle'])) {
-        $id = $_POST['user_id'];
+        $id       = $_POST['user_id'];
         $username = trim($_POST['username']);
-        $email = trim($_POST['email']);
-        $role = $_POST['role'];
-        $password = $_POST['password']; 
+        $email    = trim($_POST['email']);
+        $role     = in_array($_POST['role'], ['ADMIN', 'USER']) ? $_POST['role'] : 'USER';
+        $password = $_POST['password'] ?? ''; 
         $secilenSehirler = $_POST['sehirler'] ?? [];
 
-        try {
-            $pdo->beginTransaction();
+        // Yönetici kendi rolünü USER yapamasın
+        if ($id === $_SESSION['user_id'] && $role !== 'ADMIN') {
+            $role = 'ADMIN';
+        }
 
-            if (!empty($password)) {
-                $hashed = password_hash($password, PASSWORD_DEFAULT);
-                $stmt = $pdo->prepare("UPDATE users SET username = ?, email = ?, password = ?, role = ? WHERE id = ?");
-                $stmt->execute([$username, $email, $hashed, $role, $id]);
-            } else {
-                $stmt = $pdo->prepare("UPDATE users SET username = ?, email = ?, role = ? WHERE id = ?");
-                $stmt->execute([$username, $email, $role, $id]);
+        // Benzersizlik Kontrolü (Kendi ID'si hariç)
+        $stmtCheck = $pdo->prepare("SELECT COUNT(*) FROM users WHERE (username = ? OR email = ?) AND id != ?");
+        $stmtCheck->execute([$username, $email, $id]);
+        
+        if ($stmtCheck->fetchColumn() > 0) {
+            $mesaj = "Bu kullanıcı adı veya e-posta başka bir hesapta kullanılıyor.";
+            $mesajTuru = 'error';
+        } else {
+            try {
+                $pdo->beginTransaction();
+
+                if (!empty($password)) {
+                    if (strlen($password) < 6) {
+                        throw new Exception("Şifre en az 6 karakter olmalıdır.");
+                    }
+                    $hashed = password_hash($password, PASSWORD_DEFAULT);
+                    $stmt = $pdo->prepare("UPDATE users SET username = ?, email = ?, password = ?, role = ? WHERE id = ?");
+                    $stmt->execute([$username, $email, $hashed, $role, $id]);
+                } else {
+                    $stmt = $pdo->prepare("UPDATE users SET username = ?, email = ?, role = ? WHERE id = ?");
+                    $stmt->execute([$username, $email, $role, $id]);
+                }
+
+                if ($role === 'USER') {
+                    yetkileriGuncelle($pdo, $id, $secilenSehirler);
+                } else {
+                    $del = $pdo->prepare("DELETE FROM user_city_assignments WHERE user_id = ?");
+                    $del->execute([$id]);
+                }
+
+                $pdo->commit();
+                
+                if (function_exists('auditLog')) {
+                    auditLog('GÜNCELLEME', "Kullanıcı güncellendi: $username");
+                }
+
+                header("Location: admin.php?basarili=1");
+                exit;
+
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                $mesaj = $e->getMessage();
+                $mesajTuru = 'error';
             }
-
-            // Eğer Rol USER ise yetkileri güncelle, ADMIN ise tüm kısıtlamaları kaldır
-            if ($role === 'USER') {
-                yetkileriGuncelle($pdo, $id, $secilenSehirler);
-            } else {
-                $del = $pdo->prepare("DELETE FROM user_city_assignments WHERE user_id = ?");
-                $del->execute([$id]);
-            }
-
-            $pdo->commit();
-            header("Location: admin.php?basarili=1");
-            exit;
-
-        } catch (PDOException $e) {
-            $pdo->rollBack();
-            $mesaj = "❌ Güncelleme Hatası: " . $e->getMessage();
         }
     }
 
     // 3. SİLME
     elseif (isset($_POST['sil_id'])) {
-        if ($_POST['sil_id'] == $_SESSION['user_id']) {
-            $mesaj = "⚠️ Kendinizi silemezsiniz!";
+        $silId = $_POST['sil_id'];
+        if ($silId === $_SESSION['user_id']) {
+            $mesaj = "Kendinizi silemezsiniz!";
+            $mesajTuru = 'error';
         } else {
             try {
                 $pdo->beginTransaction();
-                $pdo->prepare("DELETE FROM user_city_assignments WHERE user_id = ?")->execute([$_POST['sil_id']]);
-                $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$_POST['sil_id']]);
+                
+                $stmtName = $pdo->prepare("SELECT username FROM users WHERE id = ?");
+                $stmtName->execute([$silId]);
+                $silinenAd = $stmtName->fetchColumn() ?? 'Bilinmeyen';
+
+                $pdo->prepare("DELETE FROM user_city_assignments WHERE user_id = ?")->execute([$silId]);
+                $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$silId]);
                 $pdo->commit();
-                $mesaj = "🗑️ Kullanıcı silindi.";
+
+                if (function_exists('auditLog')) {
+                    auditLog('SİLME', "Kullanıcı silindi: $silinenAd");
+                }
+                $mesaj = "Kullanıcı başarıyla silindi.";
+                $mesajTuru = 'success';
             } catch (PDOException $e) {
                 $pdo->rollBack();
-                $mesaj = "❌ Hata: " . $e->getMessage();
+                $mesaj = "Silme Hatası: " . $e->getMessage();
+                $mesajTuru = 'error';
             }
         }
     }
 }
 
-if(isset($_GET['basarili'])) $mesaj = "✅ İşlem başarıyla kaydedildi.";
+if (isset($_GET['basarili'])) {
+    $mesaj = "İşlem başarıyla kaydedildi.";
+    $mesajTuru = 'success';
+}
 
-// --- LİSTELEME SORGUSU (DISTINCT İLE TEKRARLARI ÖNLE) ---
-// GROUP_CONCAT içinde DISTINCT kullanarak şehirlerin mükerrer yazılmasını engelliyoruz.
+// --- LİSTELEME SORGUSU ---
 $sql = "SELECT u.*, GROUP_CONCAT(DISTINCT c.name SEPARATOR ', ') as assigned_cities 
         FROM users u
         LEFT JOIN user_city_assignments uca ON u.id = uca.user_id
@@ -178,12 +222,17 @@ require 'header.php';
         </div>
 
         <?php if($mesaj): ?>
-            <div class="bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 p-3 rounded mb-6 border-l-4 border-blue-500 dark:border-blue-400"><?= $mesaj ?></div>
+            <?php 
+                $alertRenk = $mesajTuru === 'success' 
+                    ? 'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200 border-green-500' 
+                    : ($mesajTuru === 'error' ? 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-200 border-red-500' : 'bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 border-blue-500');
+            ?>
+            <div class="<?= $alertRenk ?> p-3 rounded mb-6 border-l-4"><?= htmlspecialchars($mesaj) ?></div>
         <?php endif; ?>
 
         <div class="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 mb-8 transition-colors relative">
             <h3 class="font-bold text-lg <?= $duzenleModu ? 'text-orange-600 dark:text-orange-400' : 'text-slate-800 dark:text-white' ?> mb-4 border-b dark:border-slate-700 pb-2">
-                <?= $duzenleModu ? '✏️ Kullanıcıyı Düzenle' : '➕ Yeni Personel Ekle' ?>
+                <?= $duzenleModu ? '✏️ Kullanıcıyı Düzenle' : '➕ Yeni Personel / Kullanıcı Ekle' ?>
             </h3>
             
             <form method="POST" class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -205,23 +254,27 @@ require 'header.php';
                         <input type="email" name="email" value="<?= $duzenleModu ? htmlspecialchars($duzenlenecekUser['email']) : '' ?>" required class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Şifre <?= $duzenleModu ? '<span class="text-gray-400 font-normal">(Opsiyonel)</span>' : '' ?></label>
-                        <input type="text" name="password" <?= $duzenleModu ? '' : 'required' ?> class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="<?= $duzenleModu ? '••••••' : 'Şifre belirleyin' ?>">
+                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Şifre <?= $duzenleModu ? '<span class="text-gray-400 font-normal">(Değişmeyecekse boş bırakın)</span>' : '<span class="text-gray-400 font-normal">(En az 6 karakter)</span>' ?></label>
+                        <input type="text" name="password" <?= $duzenleModu ? '' : 'required' ?> minlength="6" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="<?= $duzenleModu ? '••••••' : 'Şifre belirleyin' ?>">
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Yetki Rolü</label>
-                        <select name="role" id="roleSelect" class="w-full p-2 border rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white">
+                        <select name="role" id="roleSelect" class="w-full p-2 border rounded bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-white" <?= ($duzenleModu && $duzenlenecekUser['id'] === $_SESSION['user_id']) ? 'disabled' : '' ?>>
                             <option value="USER" <?= ($duzenleModu && $duzenlenecekUser['role'] === 'USER') ? 'selected' : '' ?>>Standart Kullanıcı (User)</option>
                             <option value="ADMIN" <?= ($duzenleModu && $duzenlenecekUser['role'] === 'ADMIN') ? 'selected' : '' ?>>Yönetici (Admin)</option>
                         </select>
+                        <?php if($duzenleModu && $duzenlenecekUser['id'] === $_SESSION['user_id']): ?>
+                            <input type="hidden" name="role" value="ADMIN">
+                            <p class="text-[10px] text-amber-500 mt-1">* Kendi yönetici rolünüzü değiştiremezsiniz.</p>
+                        <?php endif; ?>
                     </div>
                 </div>
 
                 <div class="space-y-2">
-                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Erişebileceği Şehirler</label>
-                    <div id="cityContainer" class="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded p-3 h-64 overflow-y-auto custom-scrollbar">
+                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Erişebileceği Şehirler / Kilerler</label>
+                    <div id="cityContainer" class="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded p-3 h-64 overflow-y-auto">
                         <?php if(empty($tumSehirler)): ?>
-                            <div class="text-sm text-red-500 p-2">Sistemde kayıtlı şehir yok.</div>
+                            <div class="text-sm text-red-500 p-2">Sistemde kayıtlı şehir bulunmuyor.</div>
                         <?php else: ?>
                             <?php foreach($tumSehirler as $sehir): 
                                 $isChecked = in_array($sehir['id'], $kullaniciSehirleri) ? 'checked' : '';
@@ -235,7 +288,7 @@ require 'header.php';
                             <?php endforeach; ?>
                         <?php endif; ?>
                     </div>
-                    <p class="text-[10px] text-gray-400 mt-1">* Admin rolü tüm şehirlere erişir.</p>
+                    <p class="text-[10px] text-gray-400 mt-1">* Admin rolü tüm konumlara tam yetkilidir.</p>
                 </div>
 
                 <div class="md:col-span-2 text-right mt-2 flex justify-end gap-2 border-t dark:border-slate-700 pt-4">
@@ -243,7 +296,7 @@ require 'header.php';
                         <a href="admin.php" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-6 py-2 rounded font-medium transition">İptal</a>
                     <?php endif; ?>
                     <button type="submit" class="<?= $duzenleModu ? 'bg-orange-600 hover:bg-orange-700' : 'bg-green-600 hover:bg-green-700' ?> text-white px-6 py-2 rounded font-medium transition shadow-lg">
-                        <?= $duzenleModu ? 'Değişiklikleri Kaydet' : 'Kaydet' ?>
+                        <?= $duzenleModu ? 'Değişiklikleri Kaydet' : 'Kullanıcıyı Kaydet' ?>
                     </button>
                 </div>
             </form>
@@ -268,7 +321,7 @@ require 'header.php';
                     <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors <?= ($duzenleModu && $duzenlenecekUser['id'] == $k['id']) ? 'bg-orange-50 dark:bg-orange-900/10' : '' ?>">
                         <td class="p-3 font-medium text-slate-800 dark:text-slate-200">
                             <?= htmlspecialchars($k['username']) ?>
-                            <?php if($k['id'] === $_SESSION['user_id']) echo '<span class="text-xs text-green-500 ml-1">(Siz)</span>'; ?>
+                            <?php if($k['id'] === $_SESSION['user_id']) echo '<span class="text-xs text-green-500 ml-1 font-bold">(Siz)</span>'; ?>
                         </td>
                         <td class="p-3 text-slate-500 dark:text-slate-400"><?= htmlspecialchars($k['email']) ?></td>
                         <td class="p-3">
@@ -282,7 +335,7 @@ require 'header.php';
                                 <span class="text-slate-400 italic">Tümü (Admin Yetkisi)</span>
                             <?php else: ?>
                                 <?php if(!empty($k['assigned_cities'])): ?>
-                                    <span class="text-slate-700 dark:text-slate-300"><?= htmlspecialchars($k['assigned_cities']) ?></span>
+                                    <span class="text-slate-700 dark:text-slate-300 font-medium"><?= htmlspecialchars($k['assigned_cities']) ?></span>
                                 <?php else: ?>
                                     <span class="text-red-400 italic">Tanımlı Şehir Yok</span>
                                 <?php endif; ?>
@@ -290,12 +343,12 @@ require 'header.php';
                         </td>
 
                         <td class="p-3 text-right">
-                            <a href="?duzenle=<?= $k['id'] ?>" class="text-blue-600 hover:text-blue-800 dark:text-blue-400 font-medium mr-3 text-xs bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded">✏️ Düzenle</a>
+                            <a href="?duzenle=<?= $k['id'] ?>" class="text-blue-600 hover:text-blue-800 dark:text-blue-400 font-medium mr-3 text-xs bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1 rounded">✏️️ Düzenle</a>
                             <?php if($k['id'] !== $_SESSION['user_id']): ?>
                             <form method="POST" onsubmit="return confirm('Bu kullanıcıyı silmek istediğinize emin misiniz?')" class="inline">
                                 <?php echo csrfAlaniniEkle(); ?>
                                 <input type="hidden" name="sil_id" value="<?= $k['id'] ?>">
-                                <button class="text-red-500 dark:text-red-400 hover:text-red-700 font-medium text-xs bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded">🗑️ Sil</button>
+                                <button class="text-red-500 dark:text-red-400 hover:text-red-700 font-medium text-xs bg-red-50 dark:bg-red-900/20 px-2.5 py-1 rounded">🗑️ Sil</button>
                             </form>
                             <?php endif; ?>
                         </td>
@@ -314,10 +367,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const inputs = cityContainer.querySelectorAll('input[type="checkbox"]');
 
     function toggleCitySelection() {
-        if(roleSelect.value === 'ADMIN') {
+        if(roleSelect && roleSelect.value === 'ADMIN') {
             cityContainer.classList.add('opacity-50', 'pointer-events-none');
             inputs.forEach(input => input.disabled = true);
-        } else {
+        } else if(roleSelect) {
             cityContainer.classList.remove('opacity-50', 'pointer-events-none');
             inputs.forEach(input => input.disabled = false);
         }
