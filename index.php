@@ -12,15 +12,25 @@ $joinSQL = "LEFT JOIN cabinets c ON p.cabinet_id = c.id
 $whereSQL = "WHERE 1=1";
 $params = [];
 
-// Şehir Filtresi
-if (isset($_SESSION['aktif_sehir_id'])) {$whereSQL .= " AND l.city_id = ?";
-    $params[] =$_SESSION['aktif_sehir_id'];
+// Şehir Filtresi ve Yetki Kontrolü
+if (($_SESSION['role'] ?? '') !== 'ADMIN') {
+    if (!empty($_SESSION['aktif_sehir_id'])) {
+        $whereSQL .= " AND l.city_id = ? AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $params[] = $_SESSION['aktif_sehir_id'];
+        $params[] = $_SESSION['user_id'];
+    } else {
+        $whereSQL .= " AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $params[] = $_SESSION['user_id'];
+    }
+} elseif (!empty($_SESSION['aktif_sehir_id'])) {
+    $whereSQL .= " AND l.city_id = ?";
+    $params[] = $_SESSION['aktif_sehir_id'];
 }
 
 // 1. TÜM ÜRÜNLERİ ÇEK
 $sql = "SELECT p.*, l.name as loc_name, r.name as room_name, c.name as cab_name 
         FROM products p $joinSQL $whereSQL 
-        ORDER BY (p.expiry_date IS NULL) ASC, p.expiry_date ASC";
+        ORDER BY CASE WHEN p.expiry_date IS NULL THEN 1 ELSE 0 END ASC, p.expiry_date ASC";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
@@ -28,17 +38,49 @@ $tumUrunler =$stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // 2. İSTATİSTİKLER
 $toplamUrun       = count($tumUrunler);
-$bugun            = strtotime('today');$riskStats        = ['expired' => 0, 'critical' => 0, 'warning' => 0, 'safe' => 0];
-$catStats         = [];$yasGruplari      = ['0-30 Gün' => 0, '1-3 Ay' => 0, '3-6 Ay' => 0, '> 6 Ay' => 0];
+$bugun            = strtotime('today');
+$riskStats        = ['expired' => 0, 'critical' => 0, 'warning' => 0, 'safe' => 0];
+$catStats         = [];
+$yasGruplari      = ['0-30 Gün' => 0, '1-3 Ay' => 0, '3-6 Ay' => 0, '> 6 Ay' => 0];
 $kritikSktSayisi  = 0;
 $azalanStokSayisi = 0;
 $yaklasanlar      = [];
 
-foreach ($tumUrunler as $urun) {$miktar  = (float)$urun['quantity'];$minStok = isset($urun['min_quantity']) ? (float)$urun['min_quantity'] : 1.0;
+// Cins bazlı akıllı stok toplama
+$tipBilgileri = $pdo->query("SELECT id, name, default_unit, min_threshold FROM product_types")->fetchAll(PDO::FETCH_UNIQUE | PDO::FETCH_ASSOC);
+$cinsGruplari = [];
 
-    // Kritik Stok Kontrolü
-    if ($miktar <= $minStok) {$azalanStokSayisi++;
+foreach ($tumUrunler as $urun) {
+    $miktar  = (float)$urun['quantity'];
+    $tipId   = !empty($urun['product_type_id']) ? $urun['product_type_id'] : null;
+
+    if ($tipId) {
+        if (!isset($cinsGruplari[$tipId])) {
+            $esik = isset($tipBilgileri[$tipId]['min_threshold']) ? (float)$tipBilgileri[$tipId]['min_threshold'] : (float)$urun['min_quantity'];
+            $cinsGruplari[$tipId] = [
+                'esik'   => $esik,
+                'toplam' => 0.0
+            ];
+        }
+        $cinsGruplari[$tipId]['toplam'] += $miktar;
+    } else {
+        // Cinsi olmayan tekil ürünler
+        $minStok = isset($urun['min_quantity']) ? (float)$urun['min_quantity'] : 1.0;
+        if ($miktar <= $minStok) {
+            $azalanStokSayisi++;
+        }
     }
+}
+
+// Cins toplamları eşiğin altında olanları azalan sayısına ekle
+foreach ($cinsGruplari as $cg) {
+    if ($cg['toplam'] <= $cg['esik']) {
+        $azalanStokSayisi++;
+    }
+}
+
+foreach ($tumUrunler as $urun) {
+    $miktar  = (float)$urun['quantity'];
 
     // A. Risk Analizi (SKT)
     if (empty($urun['expiry_date'])) {$riskStats['safe']++;
@@ -75,8 +117,21 @@ usort($yaklasanlar, fn($a,$b) => $a['kalan_gun'] <=>$b['kalan_gun']);
 $yaklasanlar = array_slice($yaklasanlar, 0, 10);
 
 // 3. ODA VE DOLAP VERİLERİ
-$filterPart   = isset($_SESSION['aktif_sehir_id']) ? "AND l.city_id = ?" : "";
-$filterParams = isset($_SESSION['aktif_sehir_id']) ? [$_SESSION['aktif_sehir_id']] : [];
+$filterPart   = "";
+$filterParams = [];
+
+if (($_SESSION['role'] ?? '') !== 'ADMIN') {
+    if (!empty($_SESSION['aktif_sehir_id'])) {
+        $filterPart   = "AND l.city_id = ? AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $filterParams = [$_SESSION['aktif_sehir_id'], $_SESSION['user_id']];
+    } else {
+        $filterPart   = "AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $filterParams = [$_SESSION['user_id']];
+    }
+} elseif (!empty($_SESSION['aktif_sehir_id'])) {
+    $filterPart   = "AND l.city_id = ?";
+    $filterParams = [$_SESSION['aktif_sehir_id']];
+}
 
 $odaSQL = "SELECT r.name as oda_adi, COUNT(c.id) as dolap_sayisi 
            FROM rooms r 

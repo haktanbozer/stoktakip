@@ -34,7 +34,7 @@ include 'header.php';
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js" nonce="<?= $cspNonce ?>"></script>
 <script nonce="<?= $cspNonce ?>">
 let html5QrCode = null;
-const csrfToken = "<?= $_SESSION['csrf_token'] ?>";
+const csrfToken = "<?= htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8') ?>";
 
 document.addEventListener('DOMContentLoaded', () => {
     baslatKamera();
@@ -66,13 +66,13 @@ function baslatKamera() {
                 },
                 () => {}
             ).catch(err => {
-                document.getElementById('statusText').innerHTML = `<span class="text-red-500">Kamera Hatası: ${err}</span>`;
+                const errSpan1 = document.createElement('span'); errSpan1.className = 'text-red-500'; errSpan1.textContent = 'Kamera Hatası: ' + String(err); document.getElementById('statusText').replaceChildren(errSpan1);
             });
         } else {
-            document.getElementById('statusText').innerHTML = '<span class="text-red-500">Kamera bulunamadı!</span>';
+            const errSpan2 = document.createElement('span'); errSpan2.className = 'text-red-500'; errSpan2.textContent = 'Kamera bulunamadı!'; document.getElementById('statusText').replaceChildren(errSpan2);
         }
     }).catch(err => {
-        document.getElementById('statusText').innerHTML = `<span class="text-red-500">Kamera İzni Reddedildi: ${err.message}</span>`;
+        const errSpan3 = document.createElement('span'); errSpan3.className = 'text-red-500'; errSpan3.textContent = 'Kamera İzni Reddedildi: ' + String(err.message); document.getElementById('statusText').replaceChildren(errSpan3);
     });
 }
 
@@ -112,14 +112,32 @@ async function stokSorgula(barkod) {
             
             data.forEach(urun => {
                 const konum = `${escHtml(urun.city_name)} > ${escHtml(urun.loc_name)} > ${escHtml(urun.room_name)} > ${escHtml(urun.cab_name)}`;
+                const isOpenedBadge = (urun.is_opened == 1) 
+                    ? '<span class="inline-block bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded border border-amber-300 dark:border-amber-700">⚠️ Açık Paket (Önce Bitir)</span>' 
+                    : '';
+                const sktMetni = urun.expiry_date 
+                    ? `<span class="text-xs text-slate-500 dark:text-slate-400">SKT: <strong>${escHtml(urun.expiry_date)}</strong></span>` 
+                    : '<span class="text-xs text-slate-400 italic">SKT Yok</span>';
+                const cinsiMetni = urun.product_type 
+                    ? `<span class="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold mr-1">🏷️ ${escHtml(urun.product_type)}</span>` 
+                    : '';
+
                 list.innerHTML += `
-                    <div class="bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-100 dark:border-slate-700 flex justify-between items-center gap-2 shadow-sm" id="urun_satir_${urun.id}">
-                        <div>
-                            <div class="font-bold text-sm text-slate-800 dark:text-white">${escHtml(urun.name)} ${urun.brand ? '('+escHtml(urun.brand)+')' : ''}</div>
-                            <div class="text-[10px] text-slate-500 dark:text-slate-400 mt-1">📍 ${konum}</div>
+                    <div class="bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex justify-between items-center gap-2 shadow-sm ${urun.is_opened == 1 ? 'border-l-4 border-l-amber-500' : ''}" id="urun_satir_${urun.id}">
+                        <div class="space-y-1">
+                            <div class="font-bold text-sm text-slate-800 dark:text-white flex items-center gap-1.5 flex-wrap">
+                                ${cinsiMetni}
+                                <span>${escHtml(urun.name)}</span>
+                                ${urun.brand ? '<span class="text-xs text-slate-400 font-normal">('+escHtml(urun.brand)+')</span>' : ''}
+                            </div>
+                            <div class="flex items-center gap-2 flex-wrap text-[10px]">
+                                ${isOpenedBadge}
+                                ${sktMetni}
+                            </div>
+                            <div class="text-[10px] text-slate-500 dark:text-slate-400">📍 ${konum}</div>
                             <div class="text-[10px] text-slate-500 dark:text-slate-400">Mevcut: <strong class="text-blue-600 dark:text-blue-400">${parseFloat(urun.quantity)} ${escHtml(urun.unit)}</strong></div>
                         </div>
-                        <button type="button" onclick="hizliTuket(${urun.id}, '${escHtml(urun.unit)}')" class="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-lg text-xs font-bold transition shadow whitespace-nowrap">
+                        <button type="button" onclick="hizliTuket('${urun.id}', '${escHtml(urun.unit)}')" class="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-lg text-xs font-bold transition shadow whitespace-nowrap shrink-0">
                             🗑️ Tüket (-1)
                         </button>
                     </div>
@@ -140,15 +158,22 @@ async function hizliTuket(id, birim) {
     if(!confirm('Bu üründen 1 ' + birim + ' tüketmek (stoktan düşmek) istediğinize emin misiniz?')) return;
     
     try {
-        const res = await fetch(`ajax.php?islem=hizli_tuket&id=${id}&adet=1&csrf_token=${csrfToken}`);
+        const formData = new FormData();
+        formData.append('csrf_token', csrfToken);
+        formData.append('id', id);
+        formData.append('adet', 1);
+        
+        const res = await fetch('ajax.php?islem=hizli_tuket', { method: 'POST', body: formData });
         const result = await res.json();
         
         if (result.success) {
             Swal.fire({ icon: 'success', title: 'Tüketildi!', text: 'Stok başarıyla güncellendi.', timer: 1500, showConfirmButton: false });
-            document.getElementById('urun_satir_' + id).style.opacity = '0.5';
-            document.getElementById('urun_satir_' + id).querySelector('button').disabled = true;
-            document.getElementById('urun_satir_' + id).querySelector('button').textContent = '✅ Tüketildi';
-            document.getElementById('urun_satir_' + id).querySelector('button').classList.replace('bg-red-500', 'bg-green-500');
+            const satir = document.getElementById('urun_satir_' + id);
+            if (satir) {
+                satir.style.opacity = '0.5';
+                const btn = satir.querySelector('button');
+                if (btn) { btn.disabled = true; btn.textContent = '✅ Tüketildi'; btn.classList.replace('bg-red-500', 'bg-green-500'); }
+            }
         } else {
             Swal.fire('Hata', result.error || 'Bir sorun oluştu.', 'error');
         }

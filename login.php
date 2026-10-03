@@ -17,6 +17,14 @@ if (!isset($_SESSION['user_id']) && isset($_COOKIE['remember_user'])) {
     $remUser = $stmtRem->fetch(PDO::FETCH_ASSOC);
 
     if ($remUser) {
+        // Token rotation: Eski token'ı geçersiz kıl, yeni üret
+        $newRawToken = bin2hex(random_bytes(32));
+        $newHashedToken = hash('sha256', $newRawToken);
+        $pdo->prepare("UPDATE users SET remember_token = ? WHERE id = ?")->execute([$newHashedToken, $remUser['id']]);
+        
+        $isSecure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || ($_SERVER['SERVER_PORT'] ?? 80) == 443;
+        setcookie('remember_user', $newRawToken, time() + (30 * 24 * 3600), '/', '', $isSecure, true);
+        
         session_regenerate_id(true);
         $_SESSION['user_id'] = $remUser['id'];
         $_SESSION['username'] = $remUser['username'];
@@ -150,6 +158,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Giriş Yap - StokTakip</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" href="icons/favicon.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192x192.png">
+    <link rel="apple-touch-icon" href="icons/icon-192x192.png">
+    <meta name="theme-color" content="#4f46e5">
     <script src="https://cdn.tailwindcss.com"></script>
     <script nonce="<?= $cspNonce ?>">
         tailwind.config = { darkMode: 'class' };

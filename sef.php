@@ -8,7 +8,14 @@ $mesaj = '';
 $tarif = '';
 
 // Dışlanacak gıda dışı kategoriler (böylece yeni eklenen gıda kategorileri otomatik dahil olur)
-$haricKategoriler = ['Temizlik', 'Deterjan', 'Kozmetik', 'Kişisel Bakım', 'Hırdavat', 'Elektronik', 'Diğer'];
+$haricKategoriler = [
+    'Temizlik', 'Deterjan', 'Kozmetik', 'Kişisel Bakım',
+    'Kişisel Bakım & Kozmetik', 'Kişisel Bakım ve Kozmetik',
+    'Hırdavat', 'Hırdavat & Tamirat',
+    'Kırtasiye & Ev Ofis', 'Kullan-At & Parti',
+    'Ev Gereçleri & Sarf', 'Ev Gereçleri ve Sarf',
+    'Su Arıtma', 'Elektronik', 'Diğer'
+];
 $placeholders = implode(',', array_fill(0, count($haricKategoriler), '?'));
 
 // --- SORGULARI HAZIRLA (ŞEHİR FİLTRELİ) ---
@@ -19,8 +26,17 @@ $joinSQL = "JOIN cabinets c ON p.cabinet_id = c.id
 $whereSQL = "WHERE p.quantity > 0 AND (p.category NOT IN ($placeholders) OR p.category IS NULL)";
 $params = $haricKategoriler;
 
-// Aktif Şehir Filtresi
-if (isset($_SESSION['aktif_sehir_id'])) {
+// Aktif Şehir Filtresi ve Yetki Kontrolü
+if (($_SESSION['role'] ?? '') !== 'ADMIN') {
+    if (!empty($_SESSION['aktif_sehir_id'])) {
+        $whereSQL .= " AND l.city_id = ? AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $params[] = $_SESSION['aktif_sehir_id'];
+        $params[] = $_SESSION['user_id'];
+    } else {
+        $whereSQL .= " AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $params[] = $_SESSION['user_id'];
+    }
+} elseif (!empty($_SESSION['aktif_sehir_id'])) {
     $whereSQL .= " AND l.city_id = ?";
     $params[] = $_SESSION['aktif_sehir_id'];
 }
@@ -46,13 +62,14 @@ $urunler = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Malzeme Listesini Metne Çevir
 $malzemeListesi = [];
-$bugun = strtotime('today');
+$bugunTs = strtotime('today');
+$bugun = $bugunTs;
 
 foreach ($urunler as $u) {
     $ekBilgi = "";
     if (!empty($u['expiry_date'])) {
         $skt = strtotime($u['expiry_date']);
-        $kalanGun = (int)round(($skt - $bugun) / 86400);
+        $kalanGun = (int)round(($skt - $bugunTs) / 86400);
         if ($kalanGun < 0) {
             $ekBilgi = "(ACİL TÜKET - SKT: " . abs($kalanGun) . " GÜN GEÇTİ)";
         } elseif ($kalanGun <= 14) {
@@ -205,7 +222,7 @@ require 'header.php';
                         <?php foreach($urunler as $u): 
                             $kalanGun = null;
                             if (!empty($u['expiry_date'])) {
-                                $kalanGun = (int)round((strtotime($u['expiry_date']) - $bugun) / 86400);
+                                $kalanGun = (int)round((strtotime($u['expiry_date']) - $bugunTs) / 86400);
                             }
                         ?>
                             <div class="border-b border-slate-100 dark:border-slate-700/60 pb-1.5">
@@ -239,9 +256,9 @@ require 'header.php';
                     <?php endif; ?>
                 </div>
                 
-                <form method="POST">
+                <form method="POST" onsubmit="document.getElementById('btnSubmit').innerHTML = '🍳 Şef Düşünüyor, Lütfen Bekleyin...'; document.getElementById('btnSubmit').classList.add('opacity-70', 'cursor-wait');">
                     <?php echo csrfAlaniniEkle(); ?>
-                    <button type="submit" name="oner" <?= empty($urunler) ? 'disabled' : '' ?> class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white py-3 rounded-lg font-bold shadow-md shadow-indigo-500/20 transition transform hover:scale-[1.02] flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
+                    <button id="btnSubmit" type="submit" name="oner" <?= empty($urunler) ? 'disabled' : '' ?> class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white py-3 rounded-lg font-bold shadow-md shadow-indigo-500/20 transition transform hover:scale-[1.02] flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
                         ✨ Bana Yemek Öner
                     </button>
                 </form>

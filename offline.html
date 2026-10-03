@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Çevrimdışı — Stok Takip</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 2rem;
+        }
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 1rem;
+            padding: 3rem 2rem;
+            max-width: 400px;
+            width: 100%;
+        }
+        .icon { font-size: 4rem; margin-bottom: 1rem; }
+        h1 { font-size: 1.5rem; font-weight: 800; margin-bottom: 0.5rem; color: #f1f5f9; }
+        p { color: #94a3b8; font-size: 0.9rem; line-height: 1.6; margin-bottom: 1.5rem; }
+        .btn {
+            display: inline-block;
+            background: #4f46e5;
+            color: white;
+            padding: 0.75rem 2rem;
+            border-radius: 0.5rem;
+            text-decoration: none;
+            font-weight: 700;
+            transition: background 0.2s;
+            border: none;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        .btn:hover { background: #4338ca; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">📦</div>
+        <h1>Çevrimdışısınız</h1>
+        <p>Stok Takip uygulamasına erişmek için internet bağlantısı gerekli. Bağlantınızı kontrol edip tekrar deneyin.</p>
+        <button class="btn" onclick="window.location.reload()">🔄 Tekrar Dene</button>
+    </div>
+</body>
+</html>

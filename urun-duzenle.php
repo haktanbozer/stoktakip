@@ -14,9 +14,15 @@ $sql = "SELECT p.*, c.room_id, r.location_id, l.city_id FROM products p
         WHERE p.id = ?";
 $params = [$id];
 
-if (($_SESSION['role'] ?? '') !== 'ADMIN' && isset($_SESSION['aktif_sehir_id'])) {
-    $sql .= " AND l.city_id = ?";
-    $params[] = $_SESSION['aktif_sehir_id'];
+if (($_SESSION['role'] ?? '') !== 'ADMIN') {
+    if (!empty($_SESSION['aktif_sehir_id'])) {
+        $sql .= " AND l.city_id = ? AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $params[] = $_SESSION['aktif_sehir_id'];
+        $params[] = $_SESSION['user_id'];
+    } else {
+        $sql .= " AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $params[] = $_SESSION['user_id'];
+    }
 }
 
 $stmt = $pdo->prepare($sql);
@@ -73,16 +79,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfKontrol($_POST['csrf_token'] ?? '');
     
     try {
-        $expiryDate = (!empty($_POST['expiry_date'])) ?$_POST['expiry_date'] : null;
+        $newCabId = $_POST['cabinet_id'] ?? '';
+        if (empty($newCabId)) {
+            throw new Exception("Lütfen geçerli bir dolap seçin.");
+        }
+
+        // IDOR Koruması: Hedef dolabın kullanıcının yetkili şehrine ait olduğunu doğrula
+        if (($_SESSION['role'] ?? '') !== 'ADMIN') {
+            $stmtCabCheck = $pdo->prepare("SELECT COUNT(*) FROM cabinets cab
+                JOIN rooms r ON cab.room_id = r.id
+                JOIN locations l ON r.location_id = l.id
+                JOIN user_city_assignments uca ON l.city_id = uca.city_id AND uca.user_id = ?
+                WHERE cab.id = ?");
+            $stmtCabCheck->execute([$_SESSION['user_id'], $newCabId]);
+            if ($stmtCabCheck->fetchColumn() == 0) {
+                sistemLogla("IDOR Girişimi - Yetkisiz dolaba ürün taşıma: user={$_SESSION['user_id']}, cabinet=$newCabId", 'SECURITY');
+                throw new Exception("Bu dolaba ürün taşıma yetkiniz bulunmamaktadır.");
+            }
+        }
+
+        $expiryDate = (!empty($_POST['expiry_date'])) ? $_POST['expiry_date'] : null;
         $barcode    = !empty($_POST['barcode']) ? trim($_POST['barcode']) : null;
+        $subCat     = !empty($_POST['sub_category']) ? trim($_POST['sub_category']) : '';
+        $productType   = $subCat;
+        $productTypeId = !empty($_POST['product_type_id']) ? trim($_POST['product_type_id']) : null;
         $minQty     = isset($_POST['min_quantity']) ? (float)$_POST['min_quantity'] : 1.00;
         $isOpened   = isset($_POST['is_opened']) ? 1 : 0;
         $openedAt   = ($isOpened && !empty($_POST['opened_at'])) ? $_POST['opened_at'] : ($isOpened ? date('Y-m-d') : null);
-        
+
+        // Alt kategoriye ait kritik eşiği al
+        if (!empty($subCat)) {
+            $stmtTip = $pdo->prepare("SELECT id, min_threshold FROM product_types WHERE category = ? AND (name = ? OR sub_category = ?) LIMIT 1");
+            $stmtTip->execute([$_POST['category'] ?? '', $subCat, $subCat]);
+            $tipRow = $stmtTip->fetch();
+            if (!$tipRow) {
+                // Kategori adı varyasyonu durumunda doğrudan alt kategori adıyla dene
+                $stmtTipFallback = $pdo->prepare("SELECT id, min_threshold FROM product_types WHERE (name = ? OR sub_category = ?) LIMIT 1");
+                $stmtTipFallback->execute([$subCat, $subCat]);
+                $tipRow = $stmtTipFallback->fetch();
+            }
+            if ($tipRow) { 
+                $productTypeId = $tipRow['id'];
+                $minQty = (float)$tipRow['min_threshold']; 
+            }
+        }
+
         $sql = "UPDATE products SET 
                     name = ?, 
                     barcode = ?,
                     brand = ?, 
+                    product_type = ?,
+                    product_type_id = ?,
                     category = ?, 
                     sub_category = ?, 
                     quantity = ?, 
@@ -95,23 +142,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     is_opened = ?,
                     opened_at = ?
                 WHERE id = ?";
-        $stmt =$pdo->prepare($sql);$stmt->execute([
-            $_POST['name'],$barcode,
-            $_POST['brand'],$_POST['category'], 
-            $_POST['sub_category'] ?? '',$_POST['quantity'], 
-            $minQty,$_POST['unit'], 
-            $_POST['cabinet_id'],$_POST['shelf_location'] ?? null, 
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            $_POST['name'], $barcode,
+            $_POST['brand'] ?? null, 
+            $productType, $productTypeId,
+            $_POST['category'], 
+            $_POST['sub_category'] ?? '', $_POST['quantity'], 
+            $minQty, $_POST['unit'], 
+            $newCabId, $_POST['shelf_location'] ?? null, 
             $_POST['purchase_date'], 
-            $expiryDate,$isOpened,
-            $openedAt,$id
+            $expiryDate, $isOpened,
+            $openedAt, $id
         ]);
 
-        if(function_exists('auditLog')) {
+        if (function_exists('auditLog')) {
             auditLog('GÜNCELLEME', "{$urun['name']} ürün bilgileri güncellendi. (ID: $id)");
         }
 
-        header("Location: envanter.php?durum=basarili"); exit;
-    } catch (PDOException $e) { $error = "Hata: " . $e->getMessage(); }
+        header("Location: envanter.php?durum=basarili");
+        exit;
+    } catch (PDOException $e) {
+        sistemLogla("Ürün Güncelleme PDO Hatası: " . $e->getMessage(), 'ERROR');
+        $error = "Ürün güncellenirken bir veritabanı hatası oluştu. Lütfen tekrar deneyin.";
+    } catch (Exception $e) {
+        $error = $e->getMessage();
+    }
 }
 
 require 'header.php';
@@ -125,19 +181,26 @@ require 'header.php';
     
     <?php if($error): ?>
         <div class="bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 p-3 rounded mb-4 border border-red-200 dark:border-red-800">
-            <?= $error ?>
+            <?= htmlspecialchars($error) ?>
         </div>
     <?php endif; ?>
 
-    <form method="POST" class="space-y-6">
+    <form method="POST" class="space-y-6" id="duzenleFormu">
         <?php echo csrfAlaniniEkle(); ?>
         
-        <div class="bg-slate-50 dark:bg-slate-700/30 p-4 rounded-lg border border-slate-200 dark:border-slate-600">
-            <h3 class="font-bold text-blue-600 dark:text-blue-400 mb-3">📍 Konum</h3>
+        <div id="konumKarti" class="bg-slate-50 dark:bg-slate-700/30 p-4 rounded-lg border border-slate-200 dark:border-slate-600 transition-all duration-200">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="font-bold text-blue-600 dark:text-blue-400 flex items-center gap-2">📍 Konum</h3>
+                <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
+                    * Tüm adımlar zorunludur
+                </span>
+            </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 
                 <div>
-                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Şehir</label>
+                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">
+                        Şehir <span class="text-rose-500 font-bold">*</span>
+                    </label>
                     <select id="city" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" onchange="fetchMekanlar()">
                         <?php foreach($sehirler as$s): ?>
                             <option value="<?= $s['id'] ?>" <?= $s['id']==$seciliSehir ? 'selected' : '' ?>><?= htmlspecialchars($s['name']) ?></option>
@@ -146,7 +209,9 @@ require 'header.php';
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Mekan</label>
+                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">
+                        Mekan <span class="text-rose-500 font-bold">*</span>
+                    </label>
                     <select id="location" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" onchange="fetchOdalar()">
                         <option value="">Seçiniz...</option>
                         <?php foreach($mekanlar as$m): ?>
@@ -156,7 +221,9 @@ require 'header.php';
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Oda</label>
+                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">
+                        Oda <span class="text-rose-500 font-bold">*</span>
+                    </label>
                     <select id="room" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" onchange="fetchDolaplar()">
                         <option value="">Seçiniz...</option>
                         <?php foreach($odalar as$o): ?>
@@ -166,7 +233,9 @@ require 'header.php';
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Dolap</label>
+                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">
+                        Dolap <span class="text-rose-500 font-bold">*</span>
+                    </label>
                     <select name="cabinet_id" id="cabinet" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" onchange="checkCabinetType()">
                         <option value="">Seçiniz...</option>
                         <?php foreach($dolaplar as$c): ?>
@@ -184,37 +253,55 @@ require 'header.php';
             </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div class="md:col-span-1">
-                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Barkod</label>
-                <input type="text" name="barcode" value="<?= htmlspecialchars($urun['barcode'] ?? '') ?>" placeholder="Örn: 8690504..." class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white">
-            </div>
-            <div class="md:col-span-1">
-                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Ürün Adı</label>
-                <input type="text" name="name" value="<?= htmlspecialchars($urun['name']) ?>" required class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white">
-            </div>
-            <div class="md:col-span-1">
-                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Marka</label>
-                <input type="text" name="brand" value="<?= htmlspecialchars($urun['brand']) ?>" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white">
-            </div>
-        </div>
-
-        <div class="grid grid-cols-2 gap-4">
+        <!-- ── ADIM 1: KATEGORİ & ALT KATEGORİ ─────────────────────────── -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Kategori</label>
                 <select name="category" id="category" required class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" onchange="fetchSubCategories()">
-                    <?php foreach($kategoriler as$k): ?>
+                    <?php foreach($kategoriler as $k): ?>
                         <option value="<?= htmlspecialchars($k['name']) ?>" <?= $k['name']==$urun['category'] ? 'selected' : '' ?>><?= htmlspecialchars($k['name']) ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Alt Kategori</label>
-                <select name="sub_category" id="sub_category" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white">
-                    <?php foreach($altKategoriler as$a): ?>
+                <select name="sub_category" id="sub_category" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white" onchange="onAltKategoriSecildi()">
+                    <?php foreach($altKategoriler as $a): ?>
                         <option value="<?= htmlspecialchars($a) ?>" <?= $a==$urun['sub_category'] ? 'selected' : '' ?>><?= htmlspecialchars($a) ?></option>
                     <?php endforeach; ?>
                 </select>
+                <div id="altKatKritikBadge" class="mt-2 p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-xs flex items-center justify-between text-amber-800 dark:text-amber-300 font-semibold">
+                    <span>🔔 Bu alt kategori için kritik stok eşiği: <strong id="altKatEsikMiktar"><?= (float)($urun['min_quantity'] ?? 1.00) ?></strong> <span id="altKatEsikBirim"><?= htmlspecialchars($urun['unit'] ?? 'Adet') ?></span></span>
+                </div>
+                <input type="hidden" name="product_type" id="productTypeHidden" value="<?= htmlspecialchars($urun['sub_category'] ?? '') ?>">
+                <input type="hidden" name="product_type_id" id="productTypeId" value="<?= htmlspecialchars($urun['product_type_id'] ?? '') ?>">
+                <input type="hidden" name="min_quantity" id="minQuantityInput" value="<?= htmlspecialchars($urun['min_quantity'] ?? '1.00') ?>">
+            </div>
+        </div>
+
+        <!-- ── ADIM 2: MARKA, ÜRÜN ADI, BARKOD ─────────────────────────── -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Marka <span class="text-slate-400 font-normal text-xs">(opsiyonel)</span></label>
+                <div class="flex gap-2">
+                    <input type="text" name="brand" id="marka" value="<?= htmlspecialchars($urun['brand'] ?? '') ?>"
+                        placeholder="Örn: Sütaş, Duru, Tat..."
+                        class="flex-1 p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white">
+                    <button type="button" onclick="document.getElementById('marka').value='Açık / Markasız'"
+                        class="text-xs bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 px-2 py-1 rounded border dark:border-slate-600 transition whitespace-nowrap">
+                        Açık
+                    </button>
+                </div>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Ürün Adı</label>
+                <input type="text" name="name" value="<?= htmlspecialchars($urun['name']) ?>" required
+                    class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Barkod <span class="text-slate-400 font-normal text-xs">(opsiyonel)</span></label>
+                <input type="text" name="barcode" value="<?= htmlspecialchars($urun['barcode'] ?? '') ?>"
+                    placeholder="Örn: 8690504..." class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white">
             </div>
         </div>
 
@@ -229,8 +316,8 @@ require 'header.php';
             </div>
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Birim</label>
-                <select name="unit" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white">
-                    <?php foreach(['Adet','Paket','Kutu','Şişe','Kavanoz','Kg','Gram','Lt','Mililitre'] as $b): ?>
+                <select name="unit" id="birimSelect" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white">
+                    <?php foreach(['Adet', 'Paket', 'Kg', 'Litre'] as $b): ?>
                         <option value="<?= $b ?>" <?= $b==$urun['unit'] ? 'selected' : '' ?>><?=$b ?></option>
                     <?php endforeach; ?>
                 </select>
@@ -270,7 +357,7 @@ require 'header.php';
     </form>
 </div>
 
-<script>
+<script nonce="<?= $cspNonce ?>">
 document.addEventListener('DOMContentLoaded', () => { 
     const currentShelf = '<?= htmlspecialchars($urun['shelf_location'] ?? '') ?>';
     if(document.getElementById('cabinet').value) {
@@ -314,18 +401,28 @@ async function fetchMekanlar() {
     const c = document.getElementById('city').value; 
     const l = document.getElementById('location'); 
     l.innerHTML = '<option>Yükleniyor...</option>'; 
+    l.classList.remove('ring-2', 'ring-rose-500', '!border-rose-500');
     
-    document.getElementById('room').innerHTML = '<option value="">Önce Mekan Seçiniz</option>';
-    document.getElementById('cabinet').innerHTML = '<option value="">Önce Oda Seçiniz</option>';
+    const r = document.getElementById('room');
+    const cb = document.getElementById('cabinet');
+    r.innerHTML = '<option value="">Önce Mekan Seçiniz</option>';
+    r.classList.remove('ring-2', 'ring-rose-500', '!border-rose-500');
+    cb.innerHTML = '<option value="">Önce Oda Seçiniz</option>';
+    cb.classList.remove('ring-2', 'ring-rose-500', '!border-rose-500');
     
     const d = await fetchData('get_mekanlar', c); 
     l.innerHTML = '<option value="">Seçiniz...</option>'; 
-    d.forEach(i => l.innerHTML += `<option value="${i.id}">${i.name}</option>`); 
+    d.forEach(i => { const opt = document.createElement('option'); opt.value = i.id; opt.textContent = i.name; l.appendChild(opt); }); 
+    if (d && d.length === 1) {
+        l.value = d[0].id;
+        await fetchOdalar();
+    }
 }
 
 async function fetchOdalar() { 
     const c = document.getElementById('location').value; 
     const r = document.getElementById('room'); 
+    r.classList.remove('ring-2', 'ring-rose-500', '!border-rose-500');
     
     if(!c) {
         r.innerHTML = '<option value="">Önce Mekan Seçiniz</option>';
@@ -333,16 +430,23 @@ async function fetchOdalar() {
     }
 
     r.innerHTML = '<option>Yükleniyor...</option>'; 
-    document.getElementById('cabinet').innerHTML = '<option value="">Önce Oda Seçiniz</option>';
+    const cb = document.getElementById('cabinet');
+    cb.innerHTML = '<option value="">Önce Oda Seçiniz</option>';
+    cb.classList.remove('ring-2', 'ring-rose-500', '!border-rose-500');
     
     const d = await fetchData('get_odalar', c); 
     r.innerHTML = '<option value="">Seçiniz...</option>'; 
-    d.forEach(i => r.innerHTML += `<option value="${i.id}">${i.name}</option>`); 
+    d.forEach(i => { const opt = document.createElement('option'); opt.value = i.id; opt.textContent = i.name; r.appendChild(opt); }); 
+    if (d && d.length === 1) {
+        r.value = d[0].id;
+        await fetchDolaplar();
+    }
 }
 
 async function fetchDolaplar() { 
     const c = document.getElementById('room').value; 
     const cb = document.getElementById('cabinet'); 
+    cb.classList.remove('ring-2', 'ring-rose-500', '!border-rose-500');
     
     if(!c) {
         cb.innerHTML = '<option value="">Önce Oda Seçiniz</option>';
@@ -352,7 +456,11 @@ async function fetchDolaplar() {
     cb.innerHTML = '<option>Yükleniyor...</option>'; 
     const d = await fetchData('get_dolaplar', c); 
     cb.innerHTML = '<option value="">Seçiniz...</option>'; 
-    d.forEach(i => cb.innerHTML += `<option value="${i.id}">${i.name}</option>`); 
+    d.forEach(i => { const opt = document.createElement('option'); opt.value = i.id; opt.textContent = i.name; cb.appendChild(opt); }); 
+    if (d && d.length === 1) {
+        cb.value = d[0].id;
+        await checkCabinetType();
+    }
 }
 
 async function fetchSubCategories() { 
@@ -361,8 +469,131 @@ async function fetchSubCategories() {
     s.innerHTML = '<option>Yükleniyor...</option>'; 
     const d = await fetchData('get_alt_kategoriler', c); 
     s.innerHTML = '<option value="">Seçiniz...</option>'; 
-    d.forEach(i => s.innerHTML += `<option value="${i}">${i}</option>`); 
+    d.forEach(i => { const opt = document.createElement('option'); opt.value = i; opt.textContent = i; s.appendChild(opt); }); 
+    onAltKategoriSecildi();
 }
+
+// ── ALT KATEGORİ KRİTİK EŞİK BAĞLANTISI ─────────────────────────────────
+async function onAltKategoriSecildi() {
+    const cat = document.getElementById('category').value;
+    const sub = document.getElementById('sub_category').value;
+    const badge = document.getElementById('altKatKritikBadge');
+    const hiddenType = document.getElementById('productTypeHidden');
+    const hiddenId = document.getElementById('productTypeId');
+    const hiddenMin = document.getElementById('minQuantityInput');
+    const birimSel = document.getElementById('birimSelect');
+
+    if (!sub) {
+        if (badge) badge.classList.add('hidden');
+        if (hiddenType) hiddenType.value = '';
+        if (hiddenId) hiddenId.value = '';
+        return;
+    }
+
+    if (hiddenType) hiddenType.value = sub;
+
+    try {
+        const res = await fetch(`ajax.php?islem=get_alt_kategori_bilgi&kategori=${encodeURIComponent(cat)}&alt_kategori=${encodeURIComponent(sub)}`);
+        const data = await res.json();
+        if (data) {
+            if (hiddenId) hiddenId.value = data.id || '';
+            if (hiddenMin) hiddenMin.value = data.min_threshold || 1.00;
+            const esikMiktarEl = document.getElementById('altKatEsikMiktar');
+            const esikBirimEl = document.getElementById('altKatEsikBirim');
+            if (esikMiktarEl) esikMiktarEl.textContent = data.min_threshold || 1.00;
+            if (esikBirimEl) esikBirimEl.textContent = data.default_unit || 'Adet';
+            if (badge) badge.classList.remove('hidden');
+
+            if (data.default_unit && birimSel && !birimSel.value) {
+                birimSel.value = data.default_unit;
+            }
+        }
+    } catch (e) {
+        console.error('Alt kategori eşik bilgisi alınamadı:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Sayfa açıldığında mevcut alt kategorinin eşiğini yükle
+    onAltKategoriSecildi();
+
+    // Form Gönderiminde Konum Doğrulaması (Client-side validation)
+    const duzenleFormu = document.getElementById('duzenleFormu');
+    if (duzenleFormu) {
+        duzenleFormu.addEventListener('submit', function(e) {
+            const cityEl = document.getElementById('city');
+            const locEl  = document.getElementById('location');
+            const roomEl = document.getElementById('room');
+            const cabEl  = document.getElementById('cabinet');
+
+            // Hata stillerini temizle
+            [cityEl, locEl, roomEl, cabEl].forEach(el => {
+                if (el) el.classList.remove('ring-2', 'ring-rose-500', '!border-rose-500');
+            });
+
+            let missingEl = null;
+            let missingName = '';
+
+            if (!cityEl || !cityEl.value) {
+                missingEl = cityEl;
+                missingName = 'Şehir';
+            } else if (!locEl || !locEl.value || locEl.disabled) {
+                missingEl = locEl;
+                missingName = 'Mekan (Ev/Depo)';
+            } else if (!roomEl || !roomEl.value || roomEl.disabled) {
+                missingEl = roomEl;
+                missingName = 'Oda';
+            } else if (!cabEl || !cabEl.value || cabEl.disabled) {
+                missingEl = cabEl;
+                missingName = 'Dolap';
+            }
+
+            if (missingEl) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                // Hatalı alanı görsel olarak belirginleştir
+                missingEl.classList.add('ring-2', 'ring-rose-500', '!border-rose-500');
+
+                // Konum kartına yumuşak kaydır
+                const konumKarti = document.getElementById('konumKarti');
+                if (konumKarti) {
+                    konumKarti.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+
+                if (!missingEl.disabled) {
+                    missingEl.focus();
+                }
+
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'warning',
+                        title: 'Konum Bilgisi Eksik!',
+                        html: `Ürünü kaydetmeden önce lütfen <b>${missingName}</b> seçimini yapın.<br><span class="text-xs text-slate-500 dark:text-slate-400 mt-2 block">Stok ve son kullanma tarihi takibinin doğru çalışabilmesi için konum adımları (Şehir, Mekan, Oda, Dolap) zorunludur.</span>`,
+                        confirmButtonColor: '#4f46e5',
+                        confirmButtonText: 'Tamam, Seçeceğim'
+                    });
+                } else {
+                    alert(`Lütfen geçerli bir ${missingName} seçin.`);
+                }
+                return false;
+            }
+        });
+
+        // Seçim yapıldığında kırmızı çerçeveyi temizle
+        const cityEl = document.getElementById('city');
+        const locEl  = document.getElementById('location');
+        const roomEl = document.getElementById('room');
+        const cabEl  = document.getElementById('cabinet');
+        [cityEl, locEl, roomEl, cabEl].forEach(el => {
+            if (el) {
+                el.addEventListener('change', function() {
+                    this.classList.remove('ring-2', 'ring-rose-500', '!border-rose-500');
+                });
+            }
+        });
+    }
+});
 
 async function checkCabinetType(cur = null) {
     const cid = document.getElementById('cabinet').value; 
@@ -382,16 +613,17 @@ async function checkCabinetType(cur = null) {
     if(cur) sel.innerHTML += `<option value="${cur}" selected>${cur}</option><option disabled>---</option>`;
     
     if(data.type && data.type.includes('Buzdolabı')) { 
-        ['Soğutucu','Dondurucu','Kahvaltılık'].forEach(o => {
-            if(o != cur) sel.innerHTML += `<option value="${o}">${o}</option>`;
+        container.classList.remove('hidden');
+        ['Soğutucu','Dondurucu'].forEach(o => {
+            if(o != cur) { const opt = document.createElement('option'); opt.value = o; opt.textContent = o; sel.appendChild(opt); }
         }); 
     } else { 
-        const r = parseInt(data.shelf_count) || 0; 
-        for(let i = 1; i <= r; i++) {
-            const rafName = `${i}. Raf`;
-            if(rafName != cur) sel.innerHTML += `<option value="${rafName}">${rafName}</option>`;
+        container.classList.add('hidden');
+        if('Genel' != cur && '' != cur && null != cur) { 
+            const opt = document.createElement('option'); opt.value = cur; opt.textContent = cur; sel.appendChild(opt); 
+        } else {
+            sel.innerHTML = '<option value="">Genel</option>';
         }
-        if('Genel' != cur) sel.innerHTML += '<option value="Genel">Genel</option>'; 
     }
 }
 </script>

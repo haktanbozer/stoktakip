@@ -3,7 +3,11 @@ require 'db.php';
 girisKontrol();
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'ADMIN') {
-    die("Yetkisiz erişim. <a href='index.php'>Panele Dön</a>");
+    $ip   = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $user = $_SESSION['username'] ?? 'Bilinmeyen';
+    sistemLogla("Yetkisiz Erişim Engellendi: dolap-tipleri.php (Kullanıcı: $user, IP: $ip)", 'SECURITY');
+    header("Location: index.php?hata=yetkisiz");
+    exit;
 }
 
 // CSP Nonce Kontrolü
@@ -21,10 +25,6 @@ $korunanTipler = ['Buzdolabı', 'Standart Dolap', 'Kiler'];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfKontrol($_POST['csrf_token'] ?? '');
     
-    $fields = isset($_POST['fields']) && is_array($_POST['fields']) 
-        ? implode(',', array_filter(array_map('trim', $_POST['fields']))) 
-        : '';
-
     // 1. EKLEME
     if (isset($_POST['ekle'])) {
         $tipAdi = trim($_POST['name'] ?? '');
@@ -40,38 +40,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $mesaj = "Bu isimde bir dolap tipi zaten tanımlı.";
                 $mesajTuru = 'error';
             } else {
-                $stmt = $pdo->prepare("INSERT INTO cabinet_types (name, active_fields) VALUES (?, ?)");
+                $stmt = $pdo->prepare("INSERT INTO cabinet_types (name) VALUES (?)");
                 try {
-                    $stmt->execute([$tipAdi, $fields]);
+                    $stmt->execute([$tipAdi]);
                     if (function_exists('auditLog')) {
                         auditLog('EKLEME', "Yeni dolap tipi oluşturuldu: $tipAdi");
                     }
                     $mesaj = "Dolap tipi başarıyla oluşturuldu: $tipAdi";
                     $mesajTuru = 'success';
                 } catch (PDOException $e) { 
-                    $mesaj = "Hata: " . $e->getMessage(); 
+                    sistemLogla("Dolap Tipi Ekleme Hatası: " . $e->getMessage(), 'ERROR');
+                    $mesaj = "Dolap tipi eklenirken bir hata oluştu.";
                     $mesajTuru = 'error';
                 }
             }
         }
     }
     
-    // 2. GÜNCELLEME
+    // 2. GÜNCELLEME (Artık sadece ismini güncelleyebilecek veya sadece dönüş yapacak, çünkü isim de değişmiyor readonly formda)
     elseif (isset($_POST['guncelle'])) {
         $tipAdi = trim($_POST['name'] ?? '');
-        
-        $stmt = $pdo->prepare("UPDATE cabinet_types SET active_fields = ? WHERE name = ?");
-        try {
-            $stmt->execute([$fields, $tipAdi]); 
-            if (function_exists('auditLog')) {
-                auditLog('GÜNCELLEME', "Dolap tipi özellikleri güncellendi: $tipAdi");
-            }
-            header("Location: dolap-tipleri.php?basarili=1"); 
-            exit;
-        } catch (PDOException $e) { 
-            $mesaj = "Güncelleme Hatası: " . $e->getMessage(); 
-            $mesajTuru = 'error';
-        }
+        // Sistem zaten readonly isim gönderdiği için update edecek başka bir şey kalmadı.
+        // Başarılı sayıp dönüyoruz.
+        header("Location: dolap-tipleri.php?basarili=1"); 
+        exit;
     }
 
     // 3. SİLME (Dolap ve Sistem Korumalı)
@@ -82,7 +74,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $mesaj = "⚠️ '{$silinecekTip}' temel bir sistem tipi olduğu için silinemez.";
             $mesajTuru = 'warning';
         } else {
-            // Bu tipe bağlı dolap var mı kontrol et
             $stmtSay = $pdo->prepare("SELECT COUNT(*) FROM cabinets WHERE type = ?");
             $stmtSay->execute([$silinecekTip]);
             $bagliDolapSayisi = $stmtSay->fetchColumn();
@@ -100,7 +91,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $mesaj = "Dolap tipi silindi: $silinecekTip";
                     $mesajTuru = 'success';
                 } catch (PDOException $e) { 
-                    $mesaj = "Silme Hatası: " . $e->getMessage(); 
+                    sistemLogla("Dolap Tipi Silme Hatası: " . $e->getMessage(), 'ERROR');
+                    $mesaj = "Silme işlemi sırasında bir hata oluştu.";
                     $mesajTuru = 'error';
                 }
             }
@@ -194,26 +186,6 @@ require 'header.php';
                         <?php endif; ?>
                     </div>
 
-                    <div>
-                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2">Aktif Özellikler</label>
-                        <div class="space-y-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
-                            <?php 
-                            $mevcutOzellikler = ($duzenleModu && !empty($duzenlenecekTip['active_fields'])) 
-                                ? explode(',', $duzenlenecekTip['active_fields']) 
-                                : [];
-                            
-                            foreach($ozellikler as $key => $label): 
-                                $checked = in_array($key, $mevcutOzellikler) ? 'checked' : '';
-                            ?>
-                            <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 p-2 rounded border border-transparent hover:border-slate-200 dark:hover:border-slate-600 transition">
-                                <input type="checkbox" name="fields[]" value="<?= $key ?>" class="w-4 h-4 text-blue-600 dark:bg-slate-700 dark:border-slate-500 rounded focus:ring-blue-500 dark:focus:ring-offset-slate-800" <?= $checked ?>>
-                                <?= $label ?>
-                            </label>
-                            <?php endforeach; ?>
-                        </div>
-                        <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-2">* Seçili alanlar dolap oluştururken zorunlu parametreleri belirler.</p>
-                    </div>
-
                     <button type="submit" class="w-full <?= $duzenleModu ? 'bg-orange-600 hover:bg-orange-700' : 'bg-blue-600 hover:bg-blue-700' ?> text-white py-2.5 rounded-lg font-bold transition shadow-md">
                         <?= $duzenleModu ? 'Değişiklikleri Kaydet' : 'Oluştur' ?>
                     </button>
@@ -239,18 +211,6 @@ require 'header.php';
                             <?php if($duzenleModu && $duzenlenecekTip['name'] == $t['name']): ?>
                                 <span class="text-xs bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300 px-2 py-0.5 rounded animate-pulse">Düzenleniyor</span>
                             <?php endif; ?>
-                        </div>
-
-                        <div class="flex flex-wrap gap-1 mt-2">
-                            <?php 
-                            $aktifler = explode(',', $t['active_fields']);
-                            if(empty(array_filter($aktifler))) echo "<span class='text-xs text-slate-400 dark:text-slate-500 italic'>Özellik yok</span>";
-                            foreach($aktifler as $f) {
-                                if(isset($ozellikler[$f])) {
-                                    echo "<span class='text-[10px] bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-1 rounded border border-slate-200 dark:border-slate-600'>{$ozellikler[$f]}</span>";
-                                }
-                            }
-                            ?>
                         </div>
                     </div>
                     

@@ -5,8 +5,29 @@ girisKontrol();
 // --- 1. SİLME İŞLEMİ ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sil_urun_id'])) {
     csrfKontrol($_POST['csrf_token'] ?? '');
-    $stmt = $pdo->prepare("DELETE FROM products WHERE id = ?");
-    $stmt->execute([$_POST['sil_urun_id']]);
+    
+    $silId   = $_POST['sil_urun_id'];
+    $isAdmin = ($_SESSION['role'] ?? '') === 'ADMIN';
+    
+    if ($isAdmin) {
+        // Admin: Herhangi bir ürünü silebilir
+        $stmt = $pdo->prepare("DELETE FROM products WHERE id = ?");
+        $stmt->execute([$silId]);
+    } else {
+        // Normal kullanıcı: Yalnızca yetkili olduğu şehirdeki ürünleri silebilir (IDOR koruması)
+        $stmt = $pdo->prepare("DELETE p FROM products p
+            JOIN cabinets cab ON p.cabinet_id = cab.id
+            JOIN rooms r ON cab.room_id = r.id
+            JOIN locations l ON r.location_id = l.id
+            JOIN user_city_assignments uca ON l.city_id = uca.city_id AND uca.user_id = ?
+            WHERE p.id = ?");
+        $stmt->execute([$_SESSION['user_id'], $silId]);
+        
+        if ($stmt->rowCount() === 0) {
+            sistemLogla("IDOR Girişimi - Yetkisiz ürün silme: user={$_SESSION['user_id']}, product=$silId", 'SECURITY');
+        }
+    }
+    
     header("Location: envanter.php?silindi=1");
     exit;
 }
@@ -27,56 +48,180 @@ $sql = "SELECT
         LEFT JOIN locations l ON r.location_id = l.id 
         WHERE 1=1";
 
-if (isset($_SESSION['aktif_sehir_id'])) {
+$isAdmin = ($_SESSION['role'] ?? '') === 'ADMIN';
+$userId  = $_SESSION['user_id'] ?? '';
+$cityParam = $_SESSION['aktif_sehir_id'] ?? null;
+
+if (!$isAdmin) {
+    if (!empty($cityParam)) {
+        $sql .= " AND l.city_id = ? AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $params[] = $cityParam;
+        $params[] = $userId;
+    } else {
+        $sql .= " AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $params[] = $userId;
+    }
+} elseif (!empty($cityParam)) {
     $sql .= " AND l.city_id = ?";
-    $params[] = $_SESSION['aktif_sehir_id'];
+    $params[] = $cityParam;
 }
 
 // Filtreler
 if (!empty($_GET['q'])) {
-    $sql .= " AND (p.name LIKE ? OR p.brand LIKE ?)";
+    $sql .= " AND (p.name LIKE ? OR p.brand LIKE ? OR p.product_type LIKE ?)";
     $term = "%" . $_GET['q'] . "%";
-    $params[] = $term; $params[] = $term;
+    $params[] = $term; $params[] = $term; $params[] = $term;
 }
 if (!empty($_GET['cat'])) { $sql .= " AND p.category = ?"; $params[] = $_GET['cat']; }
+if (!empty($_GET['sub_cat'])) { 
+    $sql .= " AND (p.sub_category = ? OR p.product_type = ?)"; 
+    $params[] = $_GET['sub_cat']; 
+    $params[] = $_GET['sub_cat']; 
+}
 if (!empty($_GET['filter_location_id'])) { $sql .= " AND l.id = ?"; $params[] = $_GET['filter_location_id']; }
 if (!empty($_GET['filter_room_id'])) { $sql .= " AND r.id = ?"; $params[] = $_GET['filter_room_id']; }
 if (!empty($_GET['filter_cabinet_id'])) { $sql .= " AND c.id = ?"; $params[] = $_GET['filter_cabinet_id']; }
 
 // Önce tarihi olanlar (en acil/en yakın olanlar en üstte), en sona süresizler (NULL)
-$sql .= " ORDER BY (p.expiry_date IS NULL) ASC, p.expiry_date ASC";
+$sql .= " ORDER BY CASE WHEN p.expiry_date IS NULL THEN 1 ELSE 0 END ASC, p.expiry_date ASC";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $tumUrunler = $stmt->fetchAll();
 
 // --- 3. SEÇENEKLER ---
-$kategoriler = $pdo->query("SELECT DISTINCT category FROM products")->fetchAll(PDO::FETCH_COLUMN);
+$kategoriler = $pdo->query("SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category != '' ORDER BY category ASC")->fetchAll(PDO::FETCH_COLUMN);
 
-// Transfer Modal Verileri
-// B1: String interpolasyon yerine prepared statement — SQL injection koruması
-$cityParam   = $_SESSION['aktif_sehir_id'] ?? null;
-$sehirler_tr = $pdo->query("SELECT id, name FROM cities ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+// Alt Kategori Filtre Seçenekleri
+$seciliKategori = $_GET['cat'] ?? '';
+$seciliAltKategori = $_GET['sub_cat'] ?? '';
+$altKategoriler = [];
 
-if ($cityParam) {
-    $stmtL = $pdo->prepare("SELECT l.id, l.name, l.city_id FROM locations l LEFT JOIN cities c ON l.city_id = c.id WHERE l.city_id = ? ORDER BY l.name ASC");
-    $stmtL->execute([$cityParam]);
-    $mekanlar_tr = $stmtL->fetchAll(PDO::FETCH_ASSOC);
-
-    $stmtR = $pdo->prepare("SELECT r.id, r.name, r.location_id FROM rooms r JOIN locations l ON r.location_id = l.id WHERE l.city_id = ? ORDER BY r.name ASC");
-    $stmtR->execute([$cityParam]);
-    $odalar_tr = $stmtR->fetchAll(PDO::FETCH_ASSOC);
-
-    $stmtC = $pdo->prepare("SELECT c.id, c.name, c.room_id FROM cabinets c JOIN rooms r ON c.room_id = r.id JOIN locations l ON r.location_id = l.id WHERE l.city_id = ? ORDER BY c.name ASC");
-    $stmtC->execute([$cityParam]);
-    $dolaplar_tr = $stmtC->fetchAll(PDO::FETCH_ASSOC);
+if (!empty($seciliKategori)) {
+    $stmtAlt = $pdo->prepare("SELECT DISTINCT name FROM product_types WHERE category = ? ORDER BY name ASC");
+    $stmtAlt->execute([$seciliKategori]);
+    $altKategoriler = $stmtAlt->fetchAll(PDO::FETCH_COLUMN);
+    if (empty($altKategoriler)) {
+        $stmtAlt2 = $pdo->prepare("SELECT DISTINCT sub_category FROM products WHERE category = ? AND sub_category IS NOT NULL AND sub_category != '' ORDER BY sub_category ASC");
+        $stmtAlt2->execute([$seciliKategori]);
+        $altKategoriler = $stmtAlt2->fetchAll(PDO::FETCH_COLUMN);
+    }
 } else {
-    $mekanlar_tr = $pdo->query("SELECT l.id, l.name, l.city_id FROM locations l LEFT JOIN cities c ON l.city_id = c.id ORDER BY l.name ASC")->fetchAll(PDO::FETCH_ASSOC);
-    $odalar_tr   = $pdo->query("SELECT r.id, r.name, r.location_id FROM rooms r JOIN locations l ON r.location_id = l.id ORDER BY r.name ASC")->fetchAll(PDO::FETCH_ASSOC);
-    $dolaplar_tr = $pdo->query("SELECT c.id, c.name, c.room_id FROM cabinets c JOIN rooms r ON c.room_id = r.id JOIN locations l ON r.location_id = l.id ORDER BY c.name ASC")->fetchAll(PDO::FETCH_ASSOC);
+    $altKategoriler = $pdo->query("SELECT DISTINCT sub_category FROM products WHERE sub_category IS NOT NULL AND sub_category != '' ORDER BY sub_category ASC")->fetchAll(PDO::FETCH_COLUMN);
 }
 
+// Transfer Modal Verileri & Şehir İzolasyonu
+if (!$isAdmin) {
+    $stmtSehir = $pdo->prepare("SELECT c.id, c.name FROM cities c JOIN user_city_assignments uca ON c.id = uca.city_id WHERE uca.user_id = ? ORDER BY c.name ASC");
+    $stmtSehir->execute([$userId]);
+    $sehirler_tr = $stmtSehir->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!empty($cityParam)) {
+        $stmtL = $pdo->prepare("SELECT l.id, l.name, l.city_id FROM locations l WHERE l.city_id = ? AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?) ORDER BY l.name ASC");
+        $stmtL->execute([$cityParam, $userId]);
+        $mekanlar_tr = $stmtL->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmtR = $pdo->prepare("SELECT r.id, r.name, r.location_id FROM rooms r JOIN locations l ON r.location_id = l.id WHERE l.city_id = ? AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?) ORDER BY r.name ASC");
+        $stmtR->execute([$cityParam, $userId]);
+        $odalar_tr = $stmtR->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmtC = $pdo->prepare("SELECT c.id, c.name, c.room_id FROM cabinets c JOIN rooms r ON c.room_id = r.id JOIN locations l ON r.location_id = l.id WHERE l.city_id = ? AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?) ORDER BY c.name ASC");
+        $stmtC->execute([$cityParam, $userId]);
+        $dolaplar_tr = $stmtC->fetchAll(PDO::FETCH_ASSOC);
+
+        $cinsSQL = "SELECT pt.id, pt.name, pt.category, pt.sub_category, pt.default_unit, pt.min_threshold,
+                    COALESCE(SUM(p.quantity), 0) as toplam_stok,
+                    COUNT(p.id) as paket_sayisi
+                    FROM product_types pt
+                    LEFT JOIN (
+                        SELECT prod.id, prod.product_type_id, prod.quantity
+                        FROM products prod
+                        JOIN cabinets c ON prod.cabinet_id = c.id
+                        JOIN rooms r ON c.room_id = r.id
+                        JOIN locations l ON r.location_id = l.id
+                        WHERE l.city_id = ? AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)
+                    ) p ON p.product_type_id = pt.id
+                    GROUP BY pt.id ORDER BY pt.category ASC, pt.name ASC";
+        $cinsParams = [$cityParam, $userId];
+    } else {
+        $stmtL = $pdo->prepare("SELECT l.id, l.name, l.city_id FROM locations l WHERE l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?) ORDER BY l.name ASC");
+        $stmtL->execute([$userId]);
+        $mekanlar_tr = $stmtL->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmtR = $pdo->prepare("SELECT r.id, r.name, r.location_id FROM rooms r JOIN locations l ON r.location_id = l.id WHERE l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?) ORDER BY r.name ASC");
+        $stmtR->execute([$userId]);
+        $odalar_tr = $stmtR->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmtC = $pdo->prepare("SELECT c.id, c.name, c.room_id FROM cabinets c JOIN rooms r ON c.room_id = r.id JOIN locations l ON r.location_id = l.id WHERE l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?) ORDER BY c.name ASC");
+        $stmtC->execute([$userId]);
+        $dolaplar_tr = $stmtC->fetchAll(PDO::FETCH_ASSOC);
+
+        $cinsSQL = "SELECT pt.id, pt.name, pt.category, pt.sub_category, pt.default_unit, pt.min_threshold,
+                    COALESCE(SUM(p.quantity), 0) as toplam_stok,
+                    COUNT(p.id) as paket_sayisi
+                    FROM product_types pt
+                    LEFT JOIN (
+                        SELECT prod.id, prod.product_type_id, prod.quantity
+                        FROM products prod
+                        JOIN cabinets c ON prod.cabinet_id = c.id
+                        JOIN rooms r ON c.room_id = r.id
+                        JOIN locations l ON r.location_id = l.id
+                        WHERE l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)
+                    ) p ON p.product_type_id = pt.id
+                    GROUP BY pt.id ORDER BY pt.category ASC, pt.name ASC";
+        $cinsParams = [$userId];
+    }
+} else {
+    // Admin
+    $sehirler_tr = $pdo->query("SELECT id, name FROM cities ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!empty($cityParam)) {
+        $stmtL = $pdo->prepare("SELECT l.id, l.name, l.city_id FROM locations l LEFT JOIN cities c ON l.city_id = c.id WHERE l.city_id = ? ORDER BY l.name ASC");
+        $stmtL->execute([$cityParam]);
+        $mekanlar_tr = $stmtL->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmtR = $pdo->prepare("SELECT r.id, r.name, r.location_id FROM rooms r JOIN locations l ON r.location_id = l.id WHERE l.city_id = ? ORDER BY r.name ASC");
+        $stmtR->execute([$cityParam]);
+        $odalar_tr = $stmtR->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmtC = $pdo->prepare("SELECT c.id, c.name, c.room_id FROM cabinets c JOIN rooms r ON c.room_id = r.id JOIN locations l ON r.location_id = l.id WHERE l.city_id = ? ORDER BY c.name ASC");
+        $stmtC->execute([$cityParam]);
+        $dolaplar_tr = $stmtC->fetchAll(PDO::FETCH_ASSOC);
+
+        $cinsSQL = "SELECT pt.id, pt.name, pt.category, pt.sub_category, pt.default_unit, pt.min_threshold,
+                    COALESCE(SUM(p.quantity), 0) as toplam_stok,
+                    COUNT(p.id) as paket_sayisi
+                    FROM product_types pt
+                    LEFT JOIN (
+                        SELECT prod.id, prod.product_type_id, prod.quantity
+                        FROM products prod
+                        JOIN cabinets c ON prod.cabinet_id = c.id
+                        JOIN rooms r ON c.room_id = r.id
+                        JOIN locations l ON r.location_id = l.id
+                        WHERE l.city_id = ?
+                    ) p ON p.product_type_id = pt.id
+                    GROUP BY pt.id ORDER BY pt.category ASC, pt.name ASC";
+        $cinsParams = [$cityParam];
+    } else {
+        $mekanlar_tr = $pdo->query("SELECT l.id, l.name, l.city_id FROM locations l LEFT JOIN cities c ON l.city_id = c.id ORDER BY l.name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $odalar_tr   = $pdo->query("SELECT r.id, r.name, r.location_id FROM rooms r JOIN locations l ON r.location_id = l.id ORDER BY r.name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $dolaplar_tr = $pdo->query("SELECT c.id, c.name, c.room_id FROM cabinets c JOIN rooms r ON c.room_id = r.id JOIN locations l ON r.location_id = l.id ORDER BY c.name ASC")->fetchAll(PDO::FETCH_ASSOC);
+
+        $cinsSQL = "SELECT pt.id, pt.name, pt.category, pt.sub_category, pt.default_unit, pt.min_threshold,
+                    COALESCE(SUM(p.quantity), 0) as toplam_stok,
+                    COUNT(p.id) as paket_sayisi
+                    FROM product_types pt
+                    LEFT JOIN products p ON p.product_type_id = pt.id
+                    GROUP BY pt.id ORDER BY pt.category ASC, pt.name ASC";
+        $cinsParams = [];
+    }
+}
+$stmtCins = $pdo->prepare($cinsSQL);
+$stmtCins->execute($cinsParams);
+$cinsOzetleri = $stmtCins->fetchAll(PDO::FETCH_ASSOC);
+
 require 'header.php';
+
 ?>
 
 <a href="urun-ekle.php" class="md:hidden fixed bottom-6 right-6 bg-blue-600 text-white w-14 h-14 rounded-full shadow-2xl flex items-center justify-center z-40 hover:scale-110 transition border-2 border-white dark:border-slate-800">
@@ -93,6 +238,10 @@ require 'header.php';
         <?php endif; ?>
     </h2>
     <div class="flex items-center gap-2 flex-wrap justify-end">
+        <button type="button" id="btnCinsOzetiAc" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 dark:hover:bg-indigo-900/50 px-3 py-2 rounded-lg transition items-center gap-2 flex text-sm font-bold border border-indigo-200 dark:border-indigo-800 shadow-sm" title="Evdeki Tüm Ürün Cinslerinin Toplam Stok Durumu">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+            <span>🏷️ Cins Özeti</span>
+        </button>
         <a href="excel-export.php" class="bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 px-3 py-2 rounded-lg transition items-center gap-2 flex text-sm font-bold border border-slate-200 dark:border-slate-600 shadow-sm" title="Envanteri İndir (CSV)">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             <span class="hidden md:inline">İndir</span>
@@ -124,18 +273,28 @@ require 'header.php';
         </summary>
         
         <div class="p-5 border-t border-slate-200 dark:border-slate-700">
-            <form method="GET" class="grid grid-cols-1 md:grid-cols-5 gap-4">
-                <div class="md:col-span-5 relative">
+            <form method="GET" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                <div class="sm:col-span-2 md:col-span-3 lg:col-span-6 relative">
                     <input type="text" name="q" value="<?= htmlspecialchars($_GET['q'] ?? '') ?>" placeholder="Ürün adı veya marka ara..." class="w-full pl-10 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 text-sm dark:bg-slate-900 dark:border-slate-600 dark:text-white transition-colors">
                     <svg class="absolute left-3 top-3.5 text-slate-400 w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                 </div>
 
                 <div>
                     <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Kategori</label>
-                    <select name="cat" class="w-full p-2.5 border rounded-lg text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white">
+                    <select name="cat" id="filter_cat" class="w-full p-2.5 border rounded-lg text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white">
                         <option value="">Tümü</option>
                         <?php foreach($kategoriler as $k): ?>
-                            <option value="<?= $k ?>" <?= (isset($_GET['cat']) && $_GET['cat'] == $k) ? 'selected' : '' ?>><?= $k ?></option>
+                            <option value="<?= htmlspecialchars($k) ?>" <?= ($seciliKategori == $k) ? 'selected' : '' ?>><?= htmlspecialchars($k) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Alt Kategori (Cins)</label>
+                    <select name="sub_cat" id="filter_sub_cat" class="w-full p-2.5 border rounded-lg text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white">
+                        <option value="">Tümü</option>
+                        <?php foreach($altKategoriler as $ak): ?>
+                            <option value="<?= htmlspecialchars($ak) ?>" <?= ($seciliAltKategori == $ak) ? 'selected' : '' ?>><?= htmlspecialchars($ak) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -145,7 +304,7 @@ require 'header.php';
                     <select name="filter_location_id" id="filter_location" class="w-full p-2.5 border rounded-lg text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white">
                         <option value="">Tümü</option>
                         <?php foreach($mekanlar_tr as $m): ?>
-                            <option value="<?= $m['id'] ?>" <?= (isset($_GET['filter_location_id']) && $_GET['filter_location_id'] == $m['id']) ? 'selected' : '' ?>><?= $m['name'] ?></option>
+                            <option value="<?= htmlspecialchars($m['id']) ?>" <?= (isset($_GET['filter_location_id']) && $_GET['filter_location_id'] == $m['id']) ? 'selected' : '' ?>><?= htmlspecialchars($m['name']) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -158,7 +317,7 @@ require 'header.php';
                         $cur_loc = $_GET['filter_location_id'] ?? null;
                         $filt_rooms = $cur_loc ? array_filter($odalar_tr, fn($r)=>$r['location_id']==$cur_loc) : $odalar_tr;
                         foreach($filt_rooms as $o): ?>
-                            <option value="<?= $o['id'] ?>" <?= (isset($_GET['filter_room_id']) && $_GET['filter_room_id'] == $o['id']) ? 'selected' : '' ?>><?= $o['name'] ?></option>
+                            <option value="<?= htmlspecialchars($o['id']) ?>" <?= (isset($_GET['filter_room_id']) && $_GET['filter_room_id'] == $o['id']) ? 'selected' : '' ?>><?= htmlspecialchars($o['name']) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -171,7 +330,7 @@ require 'header.php';
                         $cur_room = $_GET['filter_room_id'] ?? null;
                         $filt_cabs = $cur_room ? array_filter($dolaplar_tr, fn($c)=>$c['room_id']==$cur_room) : $dolaplar_tr;
                         foreach($filt_cabs as $c): ?>
-                            <option value="<?= $c['id'] ?>" <?= (isset($_GET['filter_cabinet_id']) && $_GET['filter_cabinet_id'] == $c['id']) ? 'selected' : '' ?>><?= $c['name'] ?></option>
+                            <option value="<?= htmlspecialchars($c['id']) ?>" <?= (isset($_GET['filter_cabinet_id']) && $_GET['filter_cabinet_id'] == $c['id']) ? 'selected' : '' ?>><?= htmlspecialchars($c['name']) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -209,8 +368,15 @@ require 'header.php';
                 <td class="px-4 py-3">
                     <div class="font-bold text-slate-800 dark:text-slate-200"><?= htmlspecialchars($urun['name']) ?></div>
                     <div class="text-xs text-slate-400"><?= htmlspecialchars($urun['brand'] ?? '') ?></div>
-                    <div class="text-[10px] text-blue-500 dark:text-blue-400 mt-1">
-                        <?= htmlspecialchars($urun['category']) ?>
+                    <div class="flex items-center gap-1.5 flex-wrap mt-1">
+                        <span class="text-[10px] text-blue-500 dark:text-blue-400">
+                            <?= htmlspecialchars($urun['category']) ?><?= !empty($urun['sub_category']) ? ' &rsaquo; ' . htmlspecialchars($urun['sub_category']) : '' ?>
+                        </span>
+                        <?php if(!empty($urun['product_type']) && $urun['product_type'] !== $urun['sub_category']): ?>
+                            <span class="inline-flex items-center text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 px-1.5 py-0.5 rounded">
+                                🏷️ <?= htmlspecialchars($urun['product_type']) ?>
+                            </span>
+                        <?php endif; ?>
                     </div>
                 </td>
                 <td class="px-4 py-3 text-xs">
@@ -220,8 +386,8 @@ require 'header.php';
                 <td class="px-4 py-3">
                     <div class="flex items-center gap-2">
                         <button type="button" class="btn-tuket w-6 h-6 rounded bg-red-100 text-red-600 hover:bg-red-500 hover:text-white flex items-center justify-center font-bold" data-id="<?= $urun['id'] ?>">-</button>
-                        <span id="qty_desk_<?= $urun['id'] ?>" class="font-bold"><?= (float)$urun['quantity'] . ' ' .$urun['unit'] ?></span>
-                        <button type="button" class="btn-transfer w-6 h-6 rounded bg-blue-100 text-blue-600 hover:bg-blue-500 hover:text-white flex items-center justify-center font-bold" data-json='<?= json_encode($urun) ?>'>⇄</button>
+                        <span id="qty_desk_<?= $urun['id'] ?>" class="font-bold"><?= (float)$urun['quantity'] . ' ' . htmlspecialchars($urun['unit']) ?></span>
+                        <button type="button" class="btn-transfer w-6 h-6 rounded bg-blue-100 text-blue-600 hover:bg-blue-500 hover:text-white flex items-center justify-center font-bold" data-json="<?= htmlspecialchars(json_encode($urun, JSON_UNESCAPED_UNICODE), ENT_QUOTES, 'UTF-8') ?>">⇄</button>
                     </div>
                 </td>
                 <td class="px-4 py-3" data-order="<?= $orderTimestamp ?>">
@@ -274,8 +440,13 @@ require 'header.php';
                     🏠 <?= htmlspecialchars($urun['room_name']) ?> &rsaquo; <?= htmlspecialchars($urun['cab_name']) ?>
                 </span>
                 <span class="bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-2 py-1 rounded">
-                    <?= htmlspecialchars($urun['category']) ?>
+                    <?= htmlspecialchars($urun['category']) ?><?= !empty($urun['sub_category']) ? ' &rsaquo; ' . htmlspecialchars($urun['sub_category']) : '' ?>
                 </span>
+                <?php if(!empty($urun['product_type']) && $urun['product_type'] !== $urun['sub_category']): ?>
+                    <span class="bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 px-2 py-1 rounded font-medium">
+                        🏷️ <?= htmlspecialchars($urun['product_type']) ?>
+                    </span>
+                <?php endif; ?>
                 <?= $durumHtml['badge'] ?>
             </div>
 
@@ -291,7 +462,7 @@ require 'header.php';
                     </button>
                     
                     <button type="button" class="btn-transfer h-9 w-9 flex items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 hover:bg-blue-100 border border-blue-200 dark:border-blue-800 transition" 
-                            data-json='<?= json_encode($urun) ?>'>
+                            data-json="<?= htmlspecialchars(json_encode($urun, JSON_UNESCAPED_UNICODE), ENT_QUOTES, 'UTF-8') ?>">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 4v16M3 8h10M3 16h10m4-8 4 4-4 4"/></svg>
                     </button>
 
@@ -351,6 +522,91 @@ require 'header.php';
                         <button type="button" id="btnTransferSubmit" class="px-6 py-2.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-lg shadow-blue-500/30 transition">Onayla</button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+<!-- ── CİNS BAZLI STOK ÖZETİ MODALI ───────────────────────────────────── -->
+<div id="cinsOzetModal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-black bg-opacity-75 backdrop-blur-sm transition-opacity duration-300">
+    <div class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-2xl transform transition-all border border-slate-200 dark:border-slate-700">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-4 pb-3 border-b dark:border-slate-700">
+                    <h3 class="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                        🏷️ Ürün Cinsi Stok Durumu (Ev Geneli)
+                    </h3>
+                    <button type="button" id="btnCinsModalKapat" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-2xl font-bold">&times;</button>
+                </div>
+
+                <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">
+                    Farklı marka ve dolaplardaki aynı cins ürünler (örn: Basmati Pirinç, Taze Kaşar) burada ev geneli olarak toplanır.
+                </p>
+
+                <?php if(empty($cinsOzetleri)): ?>
+                    <div class="text-center py-8 text-slate-400">
+                        Henüz tanımlanmış ürün cinsi bulunmuyor. Ürün eklerken "Ürün Tipi" seçerek oluşturabilirsiniz.
+                    </div>
+                <?php else: ?>
+                    <div class="overflow-x-auto max-h-96 overflow-y-auto">
+                        <table class="w-full text-left text-sm">
+                            <thead class="bg-slate-50 dark:bg-slate-700/50 text-xs font-bold uppercase text-slate-500 dark:text-slate-400 sticky top-0">
+                                <tr>
+                                    <th class="p-3">Cins Adı</th>
+                                    <th class="p-3">Kategori</th>
+                                    <th class="p-3 text-center">Toplam Stok</th>
+                                    <th class="p-3 text-center">Eşik</th>
+                                    <th class="p-3 text-center">Durum</th>
+                                    <th class="p-3 text-right">İşlem</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
+                                <?php foreach($cinsOzetleri as $co): 
+                                    $toplam = (float)$co['toplam_stok'];
+                                    $esik   = (float)$co['min_threshold'];
+                                    $durum = ($toplam <= 0) 
+                                        ? '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300">TÜKENDİ</span>' 
+                                        : (($toplam <= $esik) 
+                                            ? '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">AZALDI</span>' 
+                                            : '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300">YETERLİ</span>');
+                                ?>
+                                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30">
+                                        <td class="p-3 font-bold text-slate-800 dark:text-slate-200">
+                                            <?= htmlspecialchars($co['name']) ?>
+                                            <span class="block text-[11px] font-normal text-slate-400"><?= $co['paket_sayisi'] ?> paket</span>
+                                        </td>
+                                        <td class="p-3 text-xs text-slate-500">
+                                            <?= htmlspecialchars($co['category']) ?>
+                                            <?php if($co['sub_category']): ?>
+                                                <span class="text-slate-400">&rsaquo; <?= htmlspecialchars($co['sub_category']) ?></span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td class="p-3 text-center font-bold text-slate-700 dark:text-slate-200">
+                                            <?= $toplam ?> <?= htmlspecialchars($co['default_unit']) ?>
+                                        </td>
+                                        <td class="p-3 text-center text-xs text-slate-400">
+                                            Min: <?= $esik ?> <?= htmlspecialchars($co['default_unit']) ?>
+                                        </td>
+                                        <td class="p-3 text-center">
+                                            <?= $durum ?>
+                                        </td>
+                                        <td class="p-3 text-right">
+                                            <a href="envanter.php?q=<?= urlencode($co['name']) ?>" class="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline">
+                                                Filtrele →
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
+
+                <div class="mt-4 pt-3 border-t dark:border-slate-700 flex justify-between items-center text-xs">
+                    <span class="text-slate-400">Yeni ürün eklerken ürün tipleri otomatik listelenir.</span>
+                    <button type="button" onclick="document.getElementById('cinsOzetModal').classList.add('hidden')" class="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded font-medium hover:bg-slate-200">
+                        Kapat
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -415,6 +671,32 @@ $(document).ready(function() {
             ]
         });
     }
+
+    // Kategori değiştiğinde alt kategorileri dinamik getir
+    $('#filter_cat').change(async function() {
+        const cat = this.value;
+        const subEl = $('#filter_sub_cat');
+        subEl.html('<option value="">Yükleniyor...</option>');
+        
+        if (!cat) {
+            subEl.html('<option value="">Tümü</option>');
+            return;
+        }
+
+        try {
+            const res = await fetch(`ajax.php?islem=get_alt_kategoriler&name=${encodeURIComponent(cat)}`);
+            const data = await res.json();
+            subEl.html('<option value="">Tümü</option>');
+            if (data && data.length > 0) {
+                data.forEach(item => {
+                    subEl.append(`<option value="${item}">${item}</option>`);
+                });
+            }
+        } catch(e) {
+            console.error('Alt kategori yükleme hatası:', e);
+            subEl.html('<option value="">Tümü</option>');
+        }
+    });
 
     $('#filter_location').change(function(){ updateFilters(this.value, 'room'); });
     $('#filter_room').change(function(){ updateFilters(this.value, 'cabinet'); });
@@ -552,17 +834,23 @@ async function loadTargetShelves(cabId) {
         let res = await fetch(`ajax.php?islem=get_dolap_detay&id=${cabId}`);
         let data = await res.json();
         let sel = $('#targetShelf').html('');
-        $('#targetShelfContainer').removeClass('hidden');
-        
         if(data.type && data.type.includes('Buzdolabı')) {
-            ['Soğutucu','Dondurucu','Kahvaltılık'].forEach(x => sel.append(`<option>${x}</option>`));
+            $('#targetShelfContainer').removeClass('hidden');
+            ['Soğutucu','Dondurucu'].forEach(x => sel.append(`<option>${x}</option>`));
         } else {
-            let r = parseInt(data.shelf_count)||0;
-            if(r>0) { sel.append('<optgroup label="Raflar"></optgroup>'); for(let i=1; i<=r; i++) sel.find('optgroup').append(`<option>${i}. Raf</option>`); }
-            sel.append('<option>Genel</option>');
+            $('#targetShelfContainer').addClass('hidden');
+            sel.append('<option value="">Genel</option>');
         }
     } catch(e){}
 }
+
+// Cins Bazlı Stok Özeti Modal Kontrolleri
+$('#btnCinsOzetiAc').on('click', function() {
+    $('#cinsOzetModal').removeClass('hidden');
+});
+$('#btnCinsModalKapat').on('click', function() {
+    $('#cinsOzetModal').addClass('hidden');
+});
 </script>
 </body>
 </html>

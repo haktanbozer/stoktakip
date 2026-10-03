@@ -3,7 +3,13 @@ require 'db.php';
 girisKontrol();
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'ADMIN') {
-    die("Bu sayfaya erişim yetkiniz yok. Yönetici izni gereklidir. <a href='index.php'>Panele Dön</a>");
+    if (function_exists('sistemLogla')) {
+        $ip   = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        $user = $_SESSION['username'] ?? 'Bilinmeyen';
+        sistemLogla("Yetkisiz Sayfa Erişimi Engellendi: mekan-yonetimi.php (Kullanıcı: $user, IP: $ip)", 'SECURITY');
+    }
+    header("Location: index.php?hata=yetkisiz");
+    exit;
 }
 
 if (!isset($cspNonce)) { $cspNonce = ''; }
@@ -91,29 +97,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $type = !empty($_POST['type']) ? trim($_POST['type']) : 'Genel';
 
-                // Sayısal değerlerin boş string gitmesini engelleyip null/0 yapalım
-                $height      = !empty($_POST['height']) ? (float)$_POST['height'] : null;
-                $width       = !empty($_POST['width']) ? (float)$_POST['width'] : null;
-                $depth       = !empty($_POST['depth']) ? (float)$_POST['depth'] : null;
-                $shelfCount  = !empty($_POST['shelf_count']) ? (int)$_POST['shelf_count'] : 0;
-                $doorCount   = !empty($_POST['door_count']) ? (int)$_POST['door_count'] : 0;
-                $drawerCount = !empty($_POST['drawer_count']) ? (int)$_POST['drawer_count'] : 0;
-                $coolerVol   = !empty($_POST['cooler_volume']) ? (float)$_POST['cooler_volume'] : null;
-                $freezerVol  = !empty($_POST['freezer_volume']) ? (float)$_POST['freezer_volume'] : null;
-
-                $stmt = $pdo->prepare("INSERT INTO cabinets (id, room_id, name, height, width, depth, shelf_count, door_count, drawer_count, cooler_volume, freezer_volume, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt = $pdo->prepare("INSERT INTO cabinets (id, room_id, name, type) VALUES (?, ?, ?, ?)");
                 $stmt->execute([
                     $id, 
                     $roomId, 
                     $isim,
-                    $height,
-                    $width,
-                    $depth,
-                    $shelfCount,
-                    $doorCount,
-                    $drawerCount, 
-                    $coolerVol,
-                    $freezerVol,
                     $type
                 ]);
                 $mesaj = "Dolap/Depolama alanı tanımlandı: $isim";
@@ -137,14 +125,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmtCheck->execute([$silId]);
                 $itemName = $stmtCheck->fetchColumn() ?? 'Bilinmeyen Öğe';
 
-                // Eğer dolap siliniyorsa içindeki ürün kontrolü
+                // Kademeli Ürün Kontrolü (Silme işlemlerinde ürün kaybını önle)
                 if ($tablo === 'cabinets') {
                     $stmtProd = $pdo->prepare("SELECT COUNT(*) FROM products WHERE cabinet_id = ?");
                     $stmtProd->execute([$silId]);
                     $urunSayisi = $stmtProd->fetchColumn();
-
                     if ($urunSayisi > 0) {
                         throw new Exception("Bu dolap silinemez! İçinde kayıtlı $urunSayisi adet ürün var. Önce ürünleri başka bir dolaba taşıyın.");
+                    }
+                } elseif ($tablo === 'rooms') {
+                    $stmtProd = $pdo->prepare("SELECT COUNT(*) FROM products p JOIN cabinets cab ON p.cabinet_id = cab.id WHERE cab.room_id = ?");
+                    $stmtProd->execute([$silId]);
+                    $urunSayisi = $stmtProd->fetchColumn();
+                    if ($urunSayisi > 0) {
+                        throw new Exception("Bu oda silinemez! Odadaki dolaplarda kayıtlı $urunSayisi adet ürün var. Önce ürünleri başka bir odaya taşıyın.");
+                    }
+                } elseif ($tablo === 'locations') {
+                    $stmtProd = $pdo->prepare("SELECT COUNT(*) FROM products p JOIN cabinets cab ON p.cabinet_id = cab.id JOIN rooms r ON cab.room_id = r.id WHERE r.location_id = ?");
+                    $stmtProd->execute([$silId]);
+                    $urunSayisi = $stmtProd->fetchColumn();
+                    if ($urunSayisi > 0) {
+                        throw new Exception("Bu mekan silinemez! Mekandaki dolaplarda kayıtlı $urunSayisi adet ürün var. Önce ürünleri başka bir mekana taşıyın.");
+                    }
+                } elseif ($tablo === 'cities') {
+                    $stmtProd = $pdo->prepare("SELECT COUNT(*) FROM products p JOIN cabinets cab ON p.cabinet_id = cab.id JOIN rooms r ON cab.room_id = r.id JOIN locations l ON r.location_id = l.id WHERE l.city_id = ?");
+                    $stmtProd->execute([$silId]);
+                    $urunSayisi = $stmtProd->fetchColumn();
+                    if ($urunSayisi > 0) {
+                        throw new Exception("Bu şehir silinemez! Şehirdeki dolaplarda kayıtlı $urunSayisi adet ürün var. Önce ürünleri başka bir şehre taşıyın.");
                     }
                 }
 
@@ -351,25 +359,16 @@ require 'header.php';
 
                         <div>
                             <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Dolap Tipi</label>
-                            <select name="type" id="typeSelect" class="w-full p-2 border rounded text-sm bg-slate-50 dark:bg-slate-700 dark:border-slate-600 dark:text-white transition-colors" onchange="updateFields()">
+                            <select name="type" id="typeSelect" class="w-full p-2 border rounded text-sm bg-slate-50 dark:bg-slate-700 dark:border-slate-600 dark:text-white transition-colors">
                                 <option value="" data-fields="">Standart (Tip Seçiniz)</option>
                                 <?php foreach($dolapTipleri as $dt): ?>
-                                    <option value="<?= htmlspecialchars($dt['name']) ?>" data-fields="<?= htmlspecialchars($dt['active_fields'] ?? '') ?>">
+                                    <option value="<?= htmlspecialchars($dt['name']) ?>">
                                         <?= htmlspecialchars($dt['name']) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
 
-                        <div class="grid grid-cols-2 gap-3" id="dynamicFields">
-                            <div data-field="height" class="hidden"><label class="block text-[10px] uppercase text-slate-500 dark:text-slate-400">Yükseklik (cm)</label><input type="number" step="0.1" name="height" class="w-full p-2 border rounded text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white"></div>
-                            <div data-field="width" class="hidden"><label class="block text-[10px] uppercase text-slate-500 dark:text-slate-400">Genişlik (cm)</label><input type="number" step="0.1" name="width" class="w-full p-2 border rounded text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white"></div>
-                            <div data-field="depth" class="hidden"><label class="block text-[10px] uppercase text-slate-500 dark:text-slate-400">Derinlik (cm)</label><input type="number" step="0.1" name="depth" class="w-full p-2 border rounded text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white"></div>
-                            <div data-field="shelf_count" class="hidden"><label class="block text-[10px] uppercase text-slate-500 dark:text-slate-400">Raf Sayısı</label><input type="number" name="shelf_count" class="w-full p-2 border rounded text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white"></div>
-                            <div data-field="door_count" class="hidden"><label class="block text-[10px] uppercase text-slate-500 dark:text-slate-400">Kapak Sayısı</label><input type="number" name="door_count" class="w-full p-2 border rounded text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white"></div>
-                            <div data-field="drawer_count" class="hidden"><label class="block text-[10px] uppercase text-slate-500 dark:text-slate-400">Çekmece Sayısı</label><input type="number" name="drawer_count" class="w-full p-2 border rounded text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white"></div>
-                            <div data-field="cooler_volume" class="hidden"><label class="block text-[10px] uppercase text-slate-500 dark:text-slate-400">Soğutucu Hacim (Lt)</label><input type="number" step="0.1" name="cooler_volume" class="w-full p-2 border rounded text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white"></div>
-                            <div data-field="freezer_volume" class="hidden"><label class="block text-[10px] uppercase text-slate-500 dark:text-slate-400">Dondurucu Hacim (Lt)</label><input type="number" step="0.1" name="freezer_volume" class="w-full p-2 border rounded text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white"></div>
                         </div>
 
                         <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded text-sm font-bold transition-colors shadow">Dolabı Kaydet</button>
@@ -386,17 +385,6 @@ require 'header.php';
                                     <td class="p-2 font-medium text-slate-700 dark:text-slate-300">
                                         <?= htmlspecialchars($d['name']) ?>
                                         <span class="text-[10px] text-slate-500 font-normal ml-1">(<?= (int)$d['urun_sayisi'] ?> ürün)</span>
-                                        <div class="text-[10px] text-slate-400 dark:text-slate-500">
-                                            <?php 
-                                                $detaylar = [];
-                                                if($d['height']) $detaylar[] = "{$d['height']}x{$d['width']}x{$d['depth']} cm";
-                                                if($d['shelf_count']) $detaylar[] = "{$d['shelf_count']} Raf";
-                                                if($d['drawer_count']) $detaylar[] = "{$d['drawer_count']} Çekmece";
-                                                if($d['cooler_volume'])$detaylar[] = "❄️ {$d['cooler_volume']}L / {$d['freezer_volume']}L";
-                                                
-                                                echo implode(' | ', $detaylar);
-                                            ?>
-                                        </div>
                                     </td>
                                     <td class="p-2 text-xs">
                                         <?php if(stripos($d['type'] ?? '', 'Buzdolabı') !== false): ?>
@@ -437,27 +425,7 @@ require 'header.php';
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
 <script nonce="<?= $cspNonce ?>">
-function updateFields() {
-    const select = document.getElementById('typeSelect');
-    if (!select) return;
-    const selectedOption = select.options[select.selectedIndex];
-    const fieldsAttr = selectedOption.getAttribute('data-fields');
-    const fields = fieldsAttr ? fieldsAttr.split(',') : [];
-    
-    document.querySelectorAll('#dynamicFields > div').forEach(div => div.classList.add('hidden'));
-    
-    fields.forEach(field => {
-        let normalizedField = field.trim();
-        if(normalizedField === 'coolerVolume') normalizedField = 'cooler_volume';
-        if(normalizedField === 'freezerVolume') normalizedField = 'freezer_volume';
-        if(normalizedField === 'drawerCount') normalizedField = 'drawer_count';
-        if(normalizedField === 'shelfCount') normalizedField = 'shelf_count';
-        if(normalizedField === 'doorCount') normalizedField = 'door_count';
-        
-        const div = document.querySelector(`div[data-field="${normalizedField}"]`);
-        if(div) div.classList.remove('hidden');
-    });
-}
+
 
 function confirmDelete(event, itemType, warningText = 'Bu işlem geri alınamaz!') {
     event.preventDefault();

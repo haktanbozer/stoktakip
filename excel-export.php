@@ -6,16 +6,28 @@ girisKontrol();
 // Şehir Yetki Kontrolü
 $cityParam = [];
 $cityCond = "";
-if (($_SESSION['role'] ?? '') !== 'ADMIN' && isset($_SESSION['aktif_sehir_id'])) {
-    $cityCond = " WHERE l.city_id = ?";
-    $cityParam[] = $_SESSION['aktif_sehir_id'];
-} elseif (isset($_SESSION['aktif_sehir_id'])) {
-    $cityCond = " WHERE l.city_id = ?";
-    $cityParam[] = $_SESSION['aktif_sehir_id'];
+$isAdmin = ($_SESSION['role'] ?? '') === 'ADMIN';
+
+if ($isAdmin) {
+    if (isset($_SESSION['aktif_sehir_id'])) {
+        $cityCond = " WHERE loc.city_id = ?";
+        $cityParam[] = $_SESSION['aktif_sehir_id'];
+    }
+} else {
+    // Normal kullanıcı: Yalnızca yetkili olduğu şehirleri indirebilir
+    if (isset($_SESSION['aktif_sehir_id'])) {
+        $cityCond = " WHERE loc.city_id = ? AND loc.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $cityParam[] = $_SESSION['aktif_sehir_id'];
+        $cityParam[] = $_SESSION['user_id'];
+    } else {
+        $cityCond = " WHERE loc.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $cityParam[] = $_SESSION['user_id'];
+    }
 }
 
 $sql = "SELECT 
             p.barcode, 
+            p.product_type,
             p.name as urun_adi, 
             p.brand, 
             p.category, 
@@ -55,24 +67,35 @@ $output = fopen('php://output', 'w');
 fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
 
 // Sütun başlıkları (Noktalı virgül ';' Excel'de sütunları düzgün ayırır)
-fputcsv($output, ['Barkod', 'Ürün Adı', 'Marka', 'Kategori', 'Alt Kategori', 'Miktar', 'Birim', 'Min. Miktar', 'SKT', 'Alım Tarihi', 'Dolap', 'Oda', 'Mekan'], ';');
+fputcsv($output, ['Barkod', 'Ürün Tipi (Cins)', 'Ürün Adı', 'Marka', 'Kategori', 'Alt Kategori', 'Miktar', 'Birim', 'Min. Miktar', 'SKT', 'Alım Tarihi', 'Dolap', 'Oda', 'Mekan'], ';');
+
+// CSV Formül Enjeksiyonu (CWE-1236) Koruması
+function csvTemizle($val) {
+    if ($val === null) return '';
+    $val = (string)$val;
+    if (isset($val[0]) && in_array($val[0], ['=', '+', '-', '@', "\t", "\r"])) {
+        return "'" . $val;
+    }
+    return $val;
+}
 
 // Verileri yazdır
 foreach ($urunler as $row) {
     fputcsv($output, [
-        $row['barcode'],
-        $row['urun_adi'],
-        $row['brand'],
-        $row['category'],
-        $row['sub_category'],
-        $row['quantity'],
-        $row['unit'],
-        $row['min_quantity'],
-        $row['expiry_date'],
-        $row['purchase_date'],
-        $row['dolap'],
-        $row['oda'],
-        $row['mekan']
+        csvTemizle($row['barcode']),
+        csvTemizle($row['product_type']),
+        csvTemizle($row['urun_adi']),
+        csvTemizle($row['brand']),
+        csvTemizle($row['category']),
+        csvTemizle($row['sub_category']),
+        csvTemizle($row['quantity']),
+        csvTemizle($row['unit']),
+        csvTemizle($row['min_quantity']),
+        csvTemizle($row['expiry_date']),
+        csvTemizle($row['purchase_date']),
+        csvTemizle($row['dolap']),
+        csvTemizle($row['oda']),
+        csvTemizle($row['mekan'])
     ], ';');
 }
 

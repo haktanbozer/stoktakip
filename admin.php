@@ -4,7 +4,11 @@ girisKontrol();
 
 // Sadece Admin erişebilir
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'ADMIN') {
-    die("Bu sayfaya erişim yetkiniz yok. <a href='index.php'>Panele Dön</a>");
+    $ip   = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $user = $_SESSION['username'] ?? 'Bilinmeyen';
+    sistemLogla("Yetkisiz Erişim Engellendi: admin.php (Kullanıcı: $user, IP: $ip)", 'SECURITY');
+    header("Location: index.php?hata=yetkisiz");
+    exit;
 }
 
 $mesaj = '';
@@ -59,8 +63,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($username) || empty($password) || empty($email)) {
             $mesaj = "Lütfen tüm zorunlu alanları doldurun.";
             $mesajTuru = 'error';
-        } elseif (strlen($password) < 6) {
-            $mesaj = "Şifre en az 6 karakter olmalıdır.";
+        } elseif (strlen($password) < 8) {
+            $mesaj = "Şifre en az 8 karakter olmalıdır.";
             $mesajTuru = 'error';
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $mesaj = "Geçerli bir e-posta adresi giriniz.";
@@ -93,7 +97,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $mesajTuru = 'success';
                 } catch (PDOException $e) { 
                     $pdo->rollBack();
-                    $mesaj = "Veritabanı Hatası: " . $e->getMessage(); 
+                    sistemLogla("Admin Kullanıcı Ekleme Hatası: " . $e->getMessage(), 'ERROR');
+                    $mesaj = "Kayıt sırasında bir hata oluştu. Lütfen tekrar deneyin.";
                     $mesajTuru = 'error';
                 }
             }
@@ -126,8 +131,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->beginTransaction();
 
                 if (!empty($password)) {
-                    if (strlen($password) < 6) {
-                        throw new Exception("Şifre en az 6 karakter olmalıdır.");
+                    if (strlen($password) < 8) {
+                        throw new Exception("Şifre en az 8 karakter olmalıdır.");
                     }
                     $hashed = password_hash($password, PASSWORD_DEFAULT);
                     $stmt = $pdo->prepare("UPDATE users SET username = ?, email = ?, password = ?, role = ? WHERE id = ?");
@@ -155,7 +160,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             } catch (Exception $e) {
                 $pdo->rollBack();
-                $mesaj = $e->getMessage();
+                // Teknik hata logla, kullanıcıya genel mesaj göster
+                if ($e instanceof PDOException) {
+                    sistemLogla("Admin Kullanıcı Güncelleme Hatası: " . $e->getMessage(), 'ERROR');
+                    $mesaj = "Güncelleme sırasında bir hata oluştu.";
+                } else {
+                    $mesaj = $e->getMessage(); // Exception (örn: şifre kısa) kullanıcıya gösterilebilir
+                }
                 $mesajTuru = 'error';
             }
         }
@@ -186,7 +197,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $mesajTuru = 'success';
             } catch (PDOException $e) {
                 $pdo->rollBack();
-                $mesaj = "Silme Hatası: " . $e->getMessage();
+                sistemLogla("Admin Kullanıcı Silme Hatası: " . $e->getMessage(), 'ERROR');
+                $mesaj = "Silme işlemi sırasında bir hata oluştu.";
                 $mesajTuru = 'error';
             }
         }
@@ -254,8 +266,8 @@ require 'header.php';
                         <input type="email" name="email" value="<?= $duzenleModu ? htmlspecialchars($duzenlenecekUser['email']) : '' ?>" required class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Şifre <?= $duzenleModu ? '<span class="text-gray-400 font-normal">(Değişmeyecekse boş bırakın)</span>' : '<span class="text-gray-400 font-normal">(En az 6 karakter)</span>' ?></label>
-                        <input type="text" name="password" <?= $duzenleModu ? '' : 'required' ?> minlength="6" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="<?= $duzenleModu ? '••••••' : 'Şifre belirleyin' ?>">
+                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Şifre <?= $duzenleModu ? '<span class="text-gray-400 font-normal">(Değişmeyecekse boş bırakın)</span>' : '<span class="text-gray-400 font-normal">(En az 8 karakter)</span>' ?></label>
+                        <input type="password" name="password" autocomplete="new-password" <?= $duzenleModu ? '' : 'required' ?> minlength="8" class="w-full p-2 border rounded dark:bg-slate-700 dark:border-slate-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="<?= $duzenleModu ? '••••••••' : 'Şifre belirleyin (min 8 karakter)' ?>">
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Yetki Rolü</label>

@@ -6,7 +6,16 @@ girisKontrol();
 $params = [];
 $cityWhere = "";
 
-if (isset($_SESSION['aktif_sehir_id'])) {
+if (($_SESSION['role'] ?? '') !== 'ADMIN') {
+    if (!empty($_SESSION['aktif_sehir_id'])) {
+        $cityWhere = " AND l.city_id = ? AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?) ";
+        $params[] = $_SESSION['aktif_sehir_id'];
+        $params[] = $_SESSION['user_id'];
+    } else {
+        $cityWhere = " AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?) ";
+        $params[] = $_SESSION['user_id'];
+    }
+} elseif (!empty($_SESSION['aktif_sehir_id'])) {
     $cityWhere = " AND l.city_id = ? ";
     $params[] = $_SESSION['aktif_sehir_id'];
 }

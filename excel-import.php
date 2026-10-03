@@ -5,7 +5,13 @@ girisKontrol();
 
 if (!isset($cspNonce)) { $cspNonce = ''; }
 
-$sehirler = $pdo->query("SELECT * FROM cities ORDER BY name ASC")->fetchAll();
+if (($_SESSION['role'] ?? '') !== 'ADMIN') {
+    $stmtSehir = $pdo->prepare("SELECT c.* FROM cities c JOIN user_city_assignments uca ON c.id = uca.city_id WHERE uca.user_id = ? ORDER BY c.name ASC");
+    $stmtSehir->execute([$_SESSION['user_id']]);
+    $sehirler = $stmtSehir->fetchAll();
+} else {
+    $sehirler = $pdo->query("SELECT * FROM cities ORDER BY name ASC")->fetchAll();
+}
 $aktifSehirId = $_SESSION['aktif_sehir_id'] ?? '';
 
 $sonuc = ['basarili' => 0, 'hatali' => 0, 'hatalar' => []];
@@ -17,8 +23,8 @@ if (isset($_GET['sablon_indir'])) {
     header('Content-Disposition: attachment; filename="StokTakip_Sablon.csv"');
     $out = fopen('php://output', 'w');
     fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF));
-    fputcsv($out, ['Barkod', 'Ürün Adı', 'Marka', 'Kategori', 'Alt Kategori', 'Miktar', 'Birim', 'Min Miktar', 'SKT'], ';');
-    fputcsv($out, ['8690504000000', 'Örnek Ürün', 'MarkaAdı', 'Gıda', 'Atıştırmalık', '5', 'Adet', '1', '2027-12-31'], ';');
+    fputcsv($out, ['Barkod', 'Ürün Tipi (Cins)', 'Ürün Adı', 'Marka', 'Kategori', 'Alt Kategori', 'Miktar', 'Birim', 'Min Miktar', 'SKT'], ';');
+    fputcsv($out, ['8690504000000', 'Taze Kaşar', 'Sütaş Taze Kaşar 400g', 'Sütaş', 'Gıda', 'Peynir', '2', 'Paket', '1', '2027-12-31'], ';');
     fclose($out);
     exit;
 }
@@ -31,72 +37,145 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['import_excel'])) {
     $cabId = $_POST['cabinet_id'] ?? '';
     if (empty($cabId)) {
         $sonuc['hatalar'][] = "Lütfen ürünlerin ekleneceği hedef dolabı seçin.";
-    } elseif (!isset($_FILES['csv_file']) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK) {
-        $sonuc['hatalar'][] = "Dosya yüklenirken bir hata oluştu veya dosya seçilmedi.";
     } else {
-        $fileTmp = $_FILES['csv_file']['tmp_name'];
-        $fileName = $_FILES['csv_file']['name'];
-        $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+        // IDOR Koruması: cabinet_id'nin kullanıcının yetkili şehrine ait olduğunu doğrula
+        $isAdmin = ($_SESSION['role'] ?? '') === 'ADMIN';
+        $cabYetkili = true;
+        if (!$isAdmin) {
+            $stmtCabChk = $pdo->prepare("SELECT COUNT(*) FROM cabinets cab
+                JOIN rooms r ON cab.room_id = r.id
+                JOIN locations l ON r.location_id = l.id
+                JOIN user_city_assignments uca ON l.city_id = uca.city_id AND uca.user_id = ?
+                WHERE cab.id = ?");
+            $stmtCabChk->execute([$_SESSION['user_id'], $cabId]);
+            if ($stmtCabChk->fetchColumn() == 0) {
+                $cabYetkili = false;
+                $sonuc['hatalar'][] = "Bu dolaba yükleme yetkiniz yok.";
+                sistemLogla("IDOR Girişimi - Yetkisiz dolaba CSV yükleme: user={$_SESSION['user_id']}, cabinet=$cabId", 'SECURITY');
+            }
+        }
 
-        if ($ext !== 'csv') {
-            $sonuc['hatalar'][] = "Sadece .csv uzantılı Excel dosyaları yüklenebilir.";
-        } else {
-            // Dosyayı aç ve oku
-            if (($handle = fopen($fileTmp, "r")) !== FALSE) {
-                // İlk satırı (başlıkları) atla
-                $header = fgetcsv($handle, 1000, ";"); 
-                
-                // BOM temizliği
-                if (isset($header[0])) {
-                    $header[0] = preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $header[0]);
-                }
+        if ($cabYetkili && (!isset($_FILES['csv_file']) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK)) {
+            $sonuc['hatalar'][] = "Dosya yüklenirken bir hata oluştu veya dosya seçilmedi.";
+        } elseif ($cabYetkili) {
+            $fileTmp  = $_FILES['csv_file']['tmp_name'];
+            $fileName = $_FILES['csv_file']['name'];
+            $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
 
-                $satirNo = 1;
-                while (($data = fgetcsv($handle, 1000, ";")) !== FALSE) {
-                    $satirNo++;
-                    if (empty(array_filter($data))) continue; // Boş satırı atla
-
-                    // CSV Sütunları: Barkod[0], Ürün Adı[1], Marka[2], Kategori[3], Alt Kategori[4], Miktar[5], Birim[6], Min Miktar[7], SKT[8]
-                    $barkod   = trim($data[0] ?? '');
-                    $ad       = trim($data[1] ?? '');
-                    $marka    = trim($data[2] ?? '');
-                    $kategori = trim($data[3] ?? 'Genel');
-                    $altKat   = trim($data[4] ?? '');
-                    $miktar   = (float)str_replace(',', '.', ($data[5] ?? 1));
-                    $birim    = trim($data[6] ?? 'Adet');
-                    $minQty   = (float)str_replace(',', '.', ($data[7] ?? 1));
-                    $skt      = trim($data[8] ?? '');
-                    
-                    if (empty($skt)) $skt = null;
-                    if (empty($ad)) {
-                        $sonuc['hatali']++;
-                        $sonuc['hatalar'][] = "Satır $satirNo: Ürün adı boş olamaz.";
-                        continue;
-                    }
-
-                    try {
-                        $id = uniqid('prod_');
-                        $stmt = $pdo->prepare("INSERT INTO products
-                            (id, name, barcode, brand, category, sub_category, quantity, min_quantity, unit,
-                             cabinet_id, purchase_date, expiry_date, is_opened, added_by_user_id)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)");
-                        $stmt->execute([
-                            $id, $ad, $barkod ?: null, $marka ?: null, $kategori, $altKat, $miktar, $minQty, $birim,
-                            $cabId, date('Y-m-d'), $skt, $_SESSION['user_id']
-                        ]);
-                        $sonuc['basarili']++;
-                    } catch (PDOException $e) {
-                        $sonuc['hatali']++;
-                        $sonuc['hatalar'][] = "Satır $satirNo ($ad): Veritabanı hatası.";
-                    }
-                }
-                fclose($handle);
-
-                if (function_exists('auditLog') && $sonuc['basarili'] > 0) {
-                    auditLog('EKLEME', "Excel'den {$sonuc['basarili']} adet ürün toplu içe aktarıldı.");
-                }
+            if ($ext !== 'csv') {
+                $sonuc['hatalar'][] = "Sadece .csv uzantılı Excel dosyaları yüklenebilir.";
+            } elseif ($_FILES['csv_file']['size'] > 5 * 1024 * 1024) {
+                $sonuc['hatalar'][] = "Dosya boyutu 5MB'ı aşamaz.";
             } else {
-                $sonuc['hatalar'][] = "Dosya okunamadı.";
+                // GÜVENLİK: MIME type doğrulaması
+                $finfo = new finfo(FILEINFO_MIME_TYPE);
+                $mimeType = $finfo->file($fileTmp);
+                $allowedMimes = ['text/plain', 'text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/x-csv'];
+                if (!in_array($mimeType, $allowedMimes)) {
+                    $sonuc['hatalar'][] = "Geçersiz dosya türü ({$mimeType}). Sadece CSV dosyası kabul edilir.";
+                } else {
+                    // Mevcut ürün tiplerini al
+                    $mevcutTipler = $pdo->query("SELECT id, name, min_threshold FROM product_types")->fetchAll(PDO::FETCH_ASSOC);
+
+                    // Dosyayı aç ve oku
+                    if (($handle = fopen($fileTmp, "r")) !== FALSE) {
+                        // İlk satırı (başlıkları) atla
+                        $header = fgetcsv($handle, 65536, ";"); 
+                        
+                        // BOM temizliği
+                        if (isset($header[0])) {
+                            $header[0] = preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $header[0]);
+                        }
+
+                        // Sütun formatı algılama: Yeni formatta 10+ sütun vardır (Ürün Tipi 2. sütundadır)
+                        $isNewFormat = count($header) >= 10;
+
+                        $satirNo = 1;
+                        while (($data = fgetcsv($handle, 65536, ";")) !== FALSE) {
+                            $satirNo++;
+                            if (empty(array_filter($data))) continue; // Boş satırı atla
+
+                            if ($isNewFormat) {
+                                // Yeni Format: Barkod[0], Ürün Tipi[1], Ürün Adı[2], Marka[3], Kategori[4], Alt Kat[5], Miktar[6], Birim[7], Min Miktar[8], SKT[9]
+                                $barkod   = trim($data[0] ?? '');
+                                $pType    = trim($data[1] ?? '');
+                                $ad       = trim($data[2] ?? '');
+                                $marka    = trim($data[3] ?? '');
+                                $kategori = trim($data[4] ?? 'Gıda');
+                                $altKat   = trim($data[5] ?? '');
+                                $miktar   = (float)str_replace(',', '.', ($data[6] ?? 1));
+                                $birim    = trim($data[7] ?? 'Adet');
+                                $minQty   = (float)str_replace(',', '.', ($data[8] ?? 1));
+                                $skt      = trim($data[9] ?? '');
+                            } else {
+                                // Eski Format: Barkod[0], Ürün Adı[1], Marka[2], Kategori[3], Alt Kat[4], Miktar[5], Birim[6], Min Miktar[7], SKT[8]
+                                $barkod   = trim($data[0] ?? '');
+                                $pType    = '';
+                                $ad       = trim($data[1] ?? '');
+                                $marka    = trim($data[2] ?? '');
+                                $kategori = trim($data[3] ?? 'Gıda');
+                                $altKat   = trim($data[4] ?? '');
+                                $miktar   = (float)str_replace(',', '.', ($data[5] ?? 1));
+                                $birim    = trim($data[6] ?? 'Adet');
+                                $minQty   = (float)str_replace(',', '.', ($data[7] ?? 1));
+                                $skt      = trim($data[8] ?? '');
+                            }
+                            
+                            // 4 Standart Birime Normalizasyon
+                            if (in_array($birim, ['Kutu', 'Şişe', 'Kavanoz', 'Rulo'])) $birim = 'Adet';
+                            elseif ($birim === 'Gram') $birim = 'Paket';
+                            elseif (!in_array($birim, ['Adet', 'Paket', 'Kg', 'Litre'])) $birim = 'Adet';
+
+                            if (empty($skt)) $skt = null;
+                            if (empty($ad)) {
+                                $sonuc['hatali']++;
+                                $sonuc['hatalar'][] = "Satır $satirNo: Ürün adı boş olamaz.";
+                                continue;
+                            }
+
+                            // Ürün tipi eşleştirme / otomatik oluşturma
+                            $pTypeId = null;
+                            if (!empty($pType)) {
+                                foreach ($mevcutTipler as $mt) {
+                                    if (mb_strtolower($mt['name'], 'UTF-8') === mb_strtolower($pType, 'UTF-8')) {
+                                        $pTypeId = $mt['id'];
+                                        $minQty  = (float)$mt['min_threshold'];
+                                        break;
+                                    }
+                                }
+                                if (!$pTypeId) {
+                                    $pTypeId = 'pt_' . uniqid();
+                                    $pdo->prepare("INSERT INTO product_types (id, name, category, sub_category, default_unit, min_threshold) VALUES (?,?,?,?,?,?)")
+                                        ->execute([$pTypeId, $pType, $kategori, $altKat, $birim, $minQty]);
+                                    $mevcutTipler[] = ['id' => $pTypeId, 'name' => $pType, 'min_threshold' => $minQty];
+                                }
+                            }
+
+                            try {
+                                $id = uniqid('prod_');
+                                $stmt = $pdo->prepare("INSERT INTO products
+                                    (id, name, barcode, brand, product_type, product_type_id, category, sub_category, quantity, min_quantity, unit,
+                                     cabinet_id, purchase_date, expiry_date, is_opened, added_by_user_id)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)");
+                                $stmt->execute([
+                                    $id, $ad, $barkod ?: null, $marka ?: null, $pType ?: null, $pTypeId, $kategori, $altKat, $miktar, $minQty, $birim,
+                                    $cabId, date('Y-m-d'), $skt, $_SESSION['user_id']
+                                ]);
+                                $sonuc['basarili']++;
+                            } catch (PDOException $e) {
+                                $sonuc['hatali']++;
+                                $sonuc['hatalar'][] = "Satır $satirNo ($ad): Veritabanı hatası.";
+                            }
+                        }
+                        fclose($handle);
+
+                        if (function_exists('auditLog') && $sonuc['basarili'] > 0) {
+                            auditLog('EKLEME', "Excel'den {$sonuc['basarili']} adet ürün toplu içe aktarıldı.");
+                        }
+                    } else {
+                        $sonuc['hatalar'][] = "Dosya okunamadı.";
+                    }
+                } // MIME type kontrolü kapanışı
             }
         }
     }

@@ -173,7 +173,130 @@ try {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY ip_user_unique (ip_address, username)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-    
+
+    // ── Master Ürün (Cins) Sistemi ──────────────────────────────────────────
+    // product_types: Kritik eşiğin paket değil CİNS bazında tutulduğu tablo.
+    // Örnek: Taze Kaşar → Gıda > Peynir → min_threshold: 2 Paket
+    $pdo->exec("CREATE TABLE IF NOT EXISTS `product_types` (
+        `id`            VARCHAR(30)   NOT NULL,
+        `name`          VARCHAR(100)  NOT NULL,
+        `category`      VARCHAR(100)  NOT NULL DEFAULT '',
+        `sub_category`  VARCHAR(100)  NOT NULL DEFAULT '',
+        `default_unit`  VARCHAR(30)   NOT NULL DEFAULT 'Adet',
+        `min_threshold` DECIMAL(10,2) NOT NULL DEFAULT 1.00,
+        `created_at`    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (`id`),
+        UNIQUE KEY `uq_product_type_name` (`name`, `category`, `sub_category`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    // products tablosuna product_type_id sütunu ekle (eğer yoksa — kırılmasız migration)
+    if (empty($_SESSION['_stok_migration_v2'])) {
+        $colCheck = $pdo->query("SHOW COLUMNS FROM `products` LIKE 'product_type_id'")->fetchColumn();
+        if ($colCheck === false) {
+            $pdo->exec("ALTER TABLE `products`
+                ADD COLUMN `product_type_id` VARCHAR(30) NULL DEFAULT NULL
+                AFTER `product_type`,
+                ADD INDEX `idx_product_type_id` (`product_type_id`);");
+        }
+        // Mevcut ürünlerde boş olan product_type alanlarını doğrudan alt kategoriye eşitle
+        $pdo->exec("UPDATE `products` SET `product_type` = `sub_category` WHERE (`product_type` IS NULL OR `product_type` = '') AND `sub_category` != ''");
+        $_SESSION['_stok_migration_v2'] = true;
+    }
+
+    // ── Birim Standardizasyonu (Adet, Paket, Kg, Litre) ───────────────────
+    if (empty($_SESSION['_stok_migration_v3_units'])) {
+        try {
+            // 1. Temizlik, Kişisel Bakım, Sağlık, Hırdavat, Kırtasiye, Ev Gereçleri, Su Arıtma ambalajlı ürünleri -> Adet
+            $pdo->exec("UPDATE `product_types` SET `default_unit` = 'Adet' 
+                WHERE `category` IN ('Temizlik', 'Kişisel Bakım & Kozmetik', 'Kişisel Bakım ve Kozmetik', 'Sağlık & Takviye', 'Hırdavat & Tamirat', 'Kırtasiye & Ev Ofis', 'Kullan-At & Parti', 'Ev Gereçleri & Sarf', 'Ev Gereçleri ve Sarf', 'Su Arıtma') 
+                OR `name` LIKE '%Şampuan%' OR `name` LIKE '%Deterjan%' OR `name` LIKE '%Sabun%' OR `name` LIKE '%Çözücü%' OR `name` LIKE '%Macun%' OR `name` LIKE '%Fırça%' OR `name` LIKE '%Jel%' OR `name` LIKE '%Krem%'");
+
+            // 2. Paketli Atıştırmalık, Fırın, Bakliyat ve Hazır Ürünler -> Paket
+            $pdo->exec("UPDATE `product_types` SET `default_unit` = 'Paket' 
+                WHERE `category` IN ('Atıştırmalık', 'Fırın & Pastacılık', 'Fırın ve Pastacılık') 
+                OR `name` LIKE '%Makarna%' OR `name` LIKE '%Bisküvi%' OR `name` LIKE '%Kraker%' OR `name` LIKE '%Cips%' OR `name` LIKE '%Gofret%' OR `name` LIKE '%Çikolata%' OR `name` LIKE '%Tablet%' OR `name` LIKE '%Mendil%' OR `name` LIKE '%Bez%' OR `name` LIKE '%Poşet%' OR `name` LIKE '%Streç%' OR `name` LIKE '%Folyo%' OR `name` LIKE '%Kağıt Havlu%' OR `name` LIKE '%Tuvalet Kağıdı%' OR `name` LIKE '%Pil%' OR `name` LIKE '%Bant%'");
+
+            // 3. Tartılı Manav, Kasap, Peynir ve Açık Bakliyat -> Kg
+            $pdo->exec("UPDATE `product_types` SET `default_unit` = 'Kg' 
+                WHERE `category` IN ('Et & Tavuk & Balık', 'Et/Tavuk/Balık', 'Meyve & Sebze') 
+                OR `name` LIKE '%Kıyma%' OR `name` LIKE '%Kuşbaşı%' OR `name` LIKE '%Biftek%' OR `name` LIKE '%Kırmızı Et%' OR `name` LIKE '%Tavuk%' OR `name` LIKE '%Hindi%' OR `name` LIKE '%Peynir%' OR `name` LIKE '%Kaşar%' OR `name` LIKE '%Un%' OR `name` LIKE '%Şeker%' OR `name` LIKE '%Tuz%' OR `name` LIKE '%Pirinç%' OR `name` LIKE '%Bulgur%' OR `name` LIKE '%Mercimek%' OR `name` LIKE '%Nohut%' OR `name` LIKE '%Fasulye%' OR `name` LIKE '%Patates%' OR `name` LIKE '%Soğan%'");
+
+            // 4. Sıvı Yağlar ve Su harici İçecek ambalajları -> Adet
+            $pdo->exec("UPDATE `product_types` SET `default_unit` = 'Adet' 
+                WHERE `category` = 'İçecek' AND `name` NOT IN ('Su', 'Maden Suyu')");
+
+            // 5. Standart dışı kalan diğer birimleri Adet'e eşitle
+            $pdo->exec("UPDATE `product_types` SET `default_unit` = 'Adet' 
+                WHERE `default_unit` NOT IN ('Adet', 'Paket', 'Kg', 'Litre')");
+
+            // 6. Mevcut ürünlerdeki (products) eski birimleri standardize et
+            $pdo->exec("UPDATE `products` SET `unit` = 'Adet' WHERE `unit` IN ('Kutu', 'Şişe', 'Kavanoz', 'Rulo')");
+            $pdo->exec("UPDATE `products` SET `unit` = 'Paket' WHERE `unit` IN ('Gram') AND `category` IN ('Atıştırmalık', 'Temel Gıda & Bakliyat', 'Fırın & Pastacılık', 'Fırın ve Pastacılık')");
+            $pdo->exec("UPDATE `products` SET `unit` = 'Adet' WHERE `unit` NOT IN ('Adet', 'Paket', 'Kg', 'Litre')");
+
+            $_SESSION['_stok_migration_v3_units'] = true;
+        } catch (Exception $e) {
+            sistemLogla("Birim migration hatası: " . $e->getMessage(), 'WARNING');
+        }
+    }
+
+    // ── Bildirimler Tablosu İyileştirmesi (days_remaining NULL desteği ve temizlik) ──
+    if (empty($_SESSION['_stok_migration_v4_notif'])) {
+        try {
+            $pdo->exec("ALTER TABLE `notifications` MODIFY COLUMN `days_remaining` INT(11) NULL DEFAULT NULL");
+            // Süresiz ürünlerin bildirimlerindeki days_remaining = 0 olanları NULL yap
+            $pdo->exec("UPDATE notifications n JOIN products p ON n.product_id = p.id SET n.days_remaining = NULL WHERE p.expiry_date IS NULL");
+            // Süresi olanların gün bilgisini bugüne göre güncelle
+            $pdo->exec("UPDATE notifications n JOIN products p ON n.product_id = p.id SET n.days_remaining = DATEDIFF(p.expiry_date, CURRENT_DATE) WHERE p.expiry_date IS NOT NULL");
+            // Artık kritik veya süresi yakın olmayan eski bildirimleri temizle
+            $pdo->exec("DELETE n FROM notifications n JOIN products p ON n.product_id = p.id WHERE n.is_read = 0 AND (p.expiry_date IS NULL OR p.expiry_date > DATE_ADD(CURRENT_DATE, INTERVAL 7 DAY)) AND (p.quantity > p.min_quantity)");
+            $_SESSION['_stok_migration_v4_notif'] = true;
+        } catch (Exception $e) {
+            sistemLogla("Bildirim migration hatası: " . $e->getMessage(), 'WARNING');
+        }
+    }
+
+    // ── Kategori & Ürün Tipi Senkronizasyonu ve Çift Kayıt Temizliği (v5) ──
+    if (empty($_SESSION['_stok_migration_v5_catsync'])) {
+        try {
+            // 1. Çift oluşan ürün tiplerini ana kayıtlara aktar
+            $pdo->exec("UPDATE `products` SET `product_type_id` = 'pt_6abfbbccadce9' WHERE `product_type_id` = 'pt_6abfeb9ebd240'");
+            $pdo->exec("UPDATE `products` SET `product_type_id` = 'pt_6abfbbccae02a' WHERE `product_type_id` = 'pt_6abfebea56933'");
+
+            // 2. Çift ürün tiplerini temizle
+            $pdo->exec("DELETE FROM `product_types` WHERE `id` IN ('pt_6abfeb9ebd240', 'pt_6abfebea56933')");
+
+            // 3. Güncellenen kategori isimlerini product_types tablosunda da senkronize et
+            $pdo->exec("UPDATE `product_types` SET `category` = 'Kişisel Bakım ve Kozmetik' WHERE `category` = 'Kişisel Bakım & Kozmetik'");
+            $pdo->exec("UPDATE `product_types` SET `category` = 'Et/Tavuk/Balık' WHERE `category` = 'Et & Tavuk & Balık'");
+            $pdo->exec("UPDATE `product_types` SET `category` = 'Fırın ve Pastacılık' WHERE `category` = 'Fırın & Pastacılık'");
+            $pdo->exec("UPDATE `product_types` SET `category` = 'Ev Gereçleri ve Sarf' WHERE `category` = 'Ev Gereçleri & Sarf'");
+            $pdo->exec("UPDATE `product_types` SET `category` = 'Diyet ve Fit Yaşam' WHERE `category` = 'Diyet & Fit Yaşam'");
+
+            $_SESSION['_stok_migration_v5_catsync'] = true;
+        } catch (Exception $e) {
+            sistemLogla("Kategori senkronizasyon migration hatası: " . $e->getMessage(), 'WARNING');
+        }
+    }
+
+    // ── v6: Et/Tavuk/Balık Hariç Her Şey Zorunlu Adet ve Eşik 1.00 ─────────────
+    if (empty($_SESSION['_stok_migration_v6_unit_adet'])) {
+        try {
+            // 1. Tüm alt kategoriler Adet ve 1.00
+            $pdo->exec("UPDATE `product_types` SET `default_unit` = 'Adet', `min_threshold` = 1.00");
+            // 2. Sadece Et/Tavuk/Balık Kg ve 1.00
+            $pdo->exec("UPDATE `product_types` SET `default_unit` = 'Kg', `min_threshold` = 1.00 WHERE `category` IN ('Et/Tavuk/Balık', 'Et & Tavuk & Balık')");
+            // 3. Mevcut ürünler de aynı kurala
+            $pdo->exec("UPDATE `products` SET `unit` = 'Adet', `min_quantity` = 1.00");
+            $pdo->exec("UPDATE `products` SET `unit` = 'Kg', `min_quantity` = 1.00 WHERE `category` IN ('Et/Tavuk/Balık', 'Et & Tavuk & Balık')");
+
+            $_SESSION['_stok_migration_v6_unit_adet'] = true;
+        } catch (Exception $e) {
+            sistemLogla("v6 birim migration hatası: " . $e->getMessage(), 'WARNING');
+        }
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
 } catch (\PDOException $e) {
     sistemLogla("Veritabanı Bağlantı Hatası: " . $e->getMessage(), 'CRITICAL');
     if (!headers_sent()) {
@@ -216,19 +339,38 @@ function csrfAlaniniEkle() {
     return '<input type="hidden" name="csrf_token" value="' . htmlspecialchars($_SESSION['csrf_token']) . '">';
 }
 
-// Otomatik Bildirim Güncelleyici (Düzeltildi)
+// Otomatik Bildirim Güncelleyici (Akıllı SKT & Kritik Stok Ayrımı)
 function bildirimleriGuncelle($pdo) {
-    // 7 günden eski okunmuş bildirimleri temizle
+    // 1. 7 günden eski okunmuş bildirimleri temizle
     $pdo->query("DELETE FROM notifications WHERE is_read = 1 AND timestamp < DATE_SUB(NOW(), INTERVAL 7 DAY)");
     
-    // Yalnızca STT'si olan ve stoğu sıfırdan büyük ürünleri kontrol et
-    $stmt = $pdo->query("SELECT id, name, expiry_date, quantity, min_quantity FROM products WHERE (expiry_date IS NOT NULL AND expiry_date <= DATE_ADD(CURRENT_DATE, INTERVAL 7 DAY)) OR (quantity <= min_quantity)");
+    // 2. Artık ne süresi geçmiş ne de kritik stoğu kalmış (stoğu yenilenmiş/doldurulmuş) okunmamış bildirimleri temizle
+    $pdo->query("
+        DELETE n FROM notifications n
+        JOIN products p ON n.product_id = p.id
+        WHERE n.is_read = 0
+          AND (p.expiry_date IS NULL OR p.expiry_date > DATE_ADD(CURRENT_DATE, INTERVAL 7 DAY))
+          AND (p.quantity > p.min_quantity)
+    ");
+
+    // 3. Şehir bilgisi olan ürünleri kontrol et (şehir izolasyonlu)
+    $stmt = $pdo->query("
+        SELECT p.id, p.name, p.expiry_date, p.quantity, p.min_quantity, l.city_id
+        FROM products p
+        JOIN cabinets cab ON p.cabinet_id = cab.id
+        JOIN rooms r ON cab.room_id = r.id
+        JOIN locations l ON r.location_id = l.id
+        WHERE (
+            (p.expiry_date IS NOT NULL AND p.expiry_date <= DATE_ADD(CURRENT_DATE, INTERVAL 7 DAY))
+            OR (p.quantity <= p.min_quantity)
+        )
+    ");
     $kritikUrunler = $stmt->fetchAll();
 
     $bugun = new DateTime('today');
 
     foreach ($kritikUrunler as $urun) {
-        $kalanGun = 0;
+        $kalanGun = null;
         $oncelik = 'medium';
 
         if (!empty($urun['expiry_date'])) {
@@ -248,6 +390,10 @@ function bildirimleriGuncelle($pdo) {
         if ($check->rowCount() == 0) {
             $ins = $pdo->prepare("INSERT INTO notifications (id, product_id, product_name, days_remaining, severity, timestamp) VALUES (UUID(), ?, ?, ?, ?, NOW())");
             $ins->execute([$urun['id'], $urun['name'], $kalanGun, $oncelik]);
+        } else {
+            // Mevcut okunmamış bildirimin kalan gün ve önceliğini dinamik güncelle
+            $upd = $pdo->prepare("UPDATE notifications SET days_remaining = ?, severity = ?, product_name = ? WHERE product_id = ? AND is_read = 0");
+            $upd->execute([$kalanGun, $oncelik, $urun['name'], $urun['id']]);
         }
     }
 }
@@ -280,7 +426,7 @@ if (!headers_sent()) {
                  "base-uri 'self'; " .
                  "object-src 'none'; " . 
                  "form-action 'self'; " . 
-                 "script-src 'self' 'unsafe-eval' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.datatables.net https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com 'nonce-{$cspNonce}'; " .
+                 "script-src 'self' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.datatables.net https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com 'nonce-{$cspNonce}'; " .
                  "style-src 'self' 'unsafe-inline' https://cdn.datatables.net https://cdn.jsdelivr.net; " .
                  "img-src 'self' data: blob: https://cdn-icons-png.flaticon.com; " .
                  "media-src 'self' blob:; " .

@@ -1,17 +1,92 @@
 {
   "name": "Ev Depo & Stok Takip",
-  "short_name": "Stok Takip",
-  "start_url": "./index.php",
+  "short_name": "StokTakip",
+  "description": "Evdeki ürünlerin ve takviyelerin stok ve son kullanma tarihi takibi.",
+  "start_url": "/stok-takip/index.php",
+  "scope": "/stok-takip/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#0f172a",
   "theme_color": "#4f46e5",
-  "description": "Evdeki ürünlerin ve takviyelerin takibi için kişisel envanter yönetimi.",
+  "lang": "tr",
+  "categories": ["productivity", "utilities"],
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/2897/2897785.png",
+      "src": "/stok-takip/icons/icon-72x72.png",
+      "sizes": "72x72",
+      "type": "image/png"
+    },
+    {
+      "src": "/stok-takip/icons/icon-96x96.png",
+      "sizes": "96x96",
+      "type": "image/png"
+    },
+    {
+      "src": "/stok-takip/icons/icon-128x128.png",
+      "sizes": "128x128",
+      "type": "image/png"
+    },
+    {
+      "src": "/stok-takip/icons/icon-144x144.png",
+      "sizes": "144x144",
+      "type": "image/png"
+    },
+    {
+      "src": "/stok-takip/icons/icon-152x152.png",
+      "sizes": "152x152",
+      "type": "image/png"
+    },
+    {
+      "src": "/stok-takip/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/stok-takip/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/stok-takip/icons/icon-384x384.png",
+      "sizes": "384x384",
+      "type": "image/png"
+    },
+    {
+      "src": "/stok-takip/icons/icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/stok-takip/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Ürün Ekle",
+      "short_name": "Ekle",
+      "description": "Yeni ürün ekle",
+      "url": "/stok-takip/urun-ekle.php",
+      "icons": [{"src": "/stok-takip/icons/icon-96x96.png", "sizes": "96x96"}]
+    },
+    {
+      "name": "Envanter",
+      "short_name": "Envanter",
+      "description": "Stok envanterini görüntüle",
+      "url": "/stok-takip/envanter.php",
+      "icons": [{"src": "/stok-takip/icons/icon-96x96.png", "sizes": "96x96"}]
+    },
+    {
+      "name": "Hızlı Tüket",
+      "short_name": "Tüket",
+      "description": "Barkod ile hızlı tüketim",
+      "url": "/stok-takip/hizli-tuket.php",
+      "icons": [{"src": "/stok-takip/icons/icon-96x96.png", "sizes": "96x96"}]
     }
   ]
 }

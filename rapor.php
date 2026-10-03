@@ -12,43 +12,64 @@ $joinSQL = "LEFT JOIN cabinets c ON p.cabinet_id = c.id
 $whereSQL = "WHERE 1=1";
 $params = [];
 
-if (isset($_SESSION['aktif_sehir_id'])) {$whereSQL .= " AND l.city_id = ?";
-    $params[] =$_SESSION['aktif_sehir_id'];
+if (($_SESSION['role'] ?? '') !== 'ADMIN') {
+    if (!empty($_SESSION['aktif_sehir_id'])) {
+        $whereSQL .= " AND l.city_id = ? AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $params[] = $_SESSION['aktif_sehir_id'];
+        $params[] = $_SESSION['user_id'];
+    } else {
+        $whereSQL .= " AND l.city_id IN (SELECT city_id FROM user_city_assignments WHERE user_id = ?)";
+        $params[] = $_SESSION['user_id'];
+    }
+} elseif (!empty($_SESSION['aktif_sehir_id'])) {
+    $whereSQL .= " AND l.city_id = ?";
+    $params[] = $_SESSION['aktif_sehir_id'];
 }
 
 $sql = "SELECT p.*, l.name as loc_name, r.name as room_name, c.name as cab_name 
-        FROM products p $joinSQL$whereSQL 
-        ORDER BY (p.expiry_date IS NULL) ASC, p.expiry_date ASC";
+        FROM products p $joinSQL $whereSQL 
+        ORDER BY CASE WHEN p.expiry_date IS NULL THEN 1 ELSE 0 END ASC, p.expiry_date ASC";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $urunler =$stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // --- İSTATİSTİK HESAPLAMA ---
-$toplamUrun = count($urunler);$bugun = strtotime('today');
+$toplamUrun = count($urunler);
+$bugunTs = strtotime('today');
+$bugun = $bugunTs;
 
-$riskStats = ['expired' => 0, 'critical' => 0, 'warning' => 0, 'safe' => 0];$yasStats  = ['new' => 0, 'stable' => 0, 'old' => 0];
-$catStats  = [];$azalanStokSayisi = 0;
+$riskStats = ['expired' => 0, 'critical' => 0, 'warning' => 0, 'safe' => 0];
+$yasStats  = ['new' => 0, 'stable' => 0, 'old' => 0];
+$catStats  = [];
+$azalanStokSayisi = 0;
 
-foreach ($urunler as $u) {$miktar  = (float)$u['quantity'];$minStok = isset($u['min_quantity']) ? (float)$u['min_quantity'] : 1.0;
+foreach ($urunler as $u) {
+    $miktar  = (float)$u['quantity'];
+    $minStok = isset($u['min_quantity']) ? (float)$u['min_quantity'] : 1.0;
 
-    if ($miktar <= $minStok) {$azalanStokSayisi++;
+    if ($miktar <= $minStok) {
+        $azalanStokSayisi++;
     }
 
     // Risk Analizi
-    if (empty($u['expiry_date'])) {$riskStats['safe']++;
+    if (empty($u['expiry_date'])) {
+        $riskStats['safe']++;
     } else {
-        $skt = strtotime($u['expiry_date']);$kalanGun = (int)round(($skt -$bugun) / 86400);
+        $skt = strtotime($u['expiry_date']);
+        $kalanGun = (int)round(($skt - $bugunTs) / 86400);
         
-        if ($kalanGun < 0)$riskStats['expired']++;
-        elseif ($kalanGun <= 7)$riskStats['critical']++;
-        elseif ($kalanGun <= 30)$riskStats['warning']++;
+        if ($kalanGun < 0) $riskStats['expired']++;
+        elseif ($kalanGun <= 7) $riskStats['critical']++;
+        elseif ($kalanGun <= 30) $riskStats['warning']++;
         else $riskStats['safe']++;
     }
 
     // Stok Yaşı
-    if (!empty($u['purchase_date'])) {$alim = strtotime($u['purchase_date']);$stokGun = (int)round(abs($bugun -$alim) / 86400);
-        if ($stokGun <= 30)$yasStats['new']++;
-        elseif ($stokGun <= 90)$yasStats['stable']++;
+    if (!empty($u['purchase_date'])) {
+        $alim = strtotime($u['purchase_date']);
+        $stokGun = (int)round(abs($bugunTs - $alim) / 86400);
+        if ($stokGun <= 30) $yasStats['new']++;
+        elseif ($stokGun <= 90) $yasStats['stable']++;
         else $yasStats['old']++;
     }
 
@@ -147,7 +168,7 @@ require 'header.php';
                     foreach($urunler as$u): 
                         if(empty($u['expiry_date'])) continue;
                         
-                        $kalan = (int)round((strtotime($u['expiry_date']) -$bugun) / 86400);
+                        $kalan = (int)round((strtotime($u['expiry_date']) - $bugunTs) / 86400);
                         if($kalan > 30) continue; 
                         $sayac++;
                     ?>

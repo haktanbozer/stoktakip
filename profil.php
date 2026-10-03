@@ -37,8 +37,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } 
     // 3. Yeni Şifre Kontrolleri
-    elseif (!empty($yeni_sifre) && strlen($yeni_sifre) < 6) {
-        $hata = "Yeni şifre en az 6 karakter uzunluğunda olmalıdır.";
+    elseif (!empty($yeni_sifre) && strlen($yeni_sifre) < 8) {
+        $hata = "Yeni şifre en az 8 karakter uzunluğunda olmalıdır.";
     }
     elseif (!empty($yeni_sifre) && $yeni_sifre !== $yeni_sifre_tekrar) {
         $hata = "Yeni şifreler birbiriyle uyuşmuyor!";
@@ -82,10 +82,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             } catch (PDOException $e) {
                 $pdo->rollBack();
-                $hata = "Veritabanı Hatası: " . $e->getMessage();
                 if (function_exists('sistemLogla')) {
                     sistemLogla("Profil Güncelleme Hatası: " . $e->getMessage(), 'ERROR');
                 }
+                $hata = "Güncelleme sırasında bir hata oluştu. Lütfen tekrar deneyin.";
             }
         }
     }
