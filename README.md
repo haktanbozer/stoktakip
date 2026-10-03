@@ -8,7 +8,7 @@
 [![Security](https://img.shields.io/badge/Security-OWASP%20Hardened-emerald?style=flat-square&logo=shield)](https://owasp.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
-Ev, yazlık veya ofis ortamlarındaki tüm kiler, buzdolabı ve erzak depolarını organize etmek, **son kullanma tarihlerini (SKT)** takip etmek ve **gıda israfını sıfırlamak** amacıyla geliştirilmiş, **PWA (Progressive Web App)** ve **akıllı barkod okuyucu** destekli açık kaynaklı stok takip platformudur.
+Ev, yazlık veya ofis ortamlarındaki tüm kiler, buzdolabı ve erzak depolarını organize etmek, **son kullanma tarihlerini (SKT)** 10 kademeli akıllı uyarı sistemiyle takip etmek, **gıda israfını sıfırlamak** ve dolaptaki malzemelerden **yapay zeka ile yemek tarifleri üretmek** amacıyla geliştirilmiş; **PWA (Progressive Web App)**, **kamera barkod okuyucu** ve **tek tıkla web kurulum sihirbazı (Turnkey Installer)** destekli açık kaynaklı stok takip platformudur.
 
 ---
 
@@ -24,136 +24,253 @@ Bu sistem sıradan bir liste uygulamasının ötesinde, gerçek ev dinamikleri v
 * **Problem:** Dondurucuya atılan et, tavuk veya sebzelerin ne zaman girdiği ve ne zaman tüketilmesi gerektiğinin unutulması.
 * **Çözüm:** Buzdolabı dolap tipinde `Soğutucu` ve `Dondurucu` bölme ayrımı. Et/Tavuk/Balık ürünleri otomatik `Kg` birimiyle ve hassas SKT uyarılarıyla takip edilir.
 
-### 3. 📧 Günlük SKT Yaklaşanlar E-Posta Raporu
-* **Problem:** Yoğun iş temposunda dolaptaki ürünlerin son kullanma tarihlerini tek tek kontrol edememek.
-* **Çözüm:** Her sabah otomatik çalışan Cron servisi sayesinde 7 gün içinde süresi dolacak veya süresi geçmiş ürünler yöneticinin e-posta kutusuna düzenli bir bülten olarak iletilir.
+### 3. ⏰ 10 Kademeli Akıllı Bildirim Sistemi (90, 60, 45, 30, 14, 7, 5, 3, 2, 1 Gün)
+* **Problem:** Ürünlerin tarihi geçmeden hemen önce fark edilememesi veya aylar öncesinden tüketim planlaması yapılamaması.
+* **Çözüm:** Sistem ürünlerin son kullanma tarihine **90, 60, 45, 30, 14, 7, 5, 3, 2 ve 1 gün kala** kademeli olarak hem web arayüzünde hem de e-posta bülteninde uyarı üretir.
 
-### 4. 🛒 Pazartesi Sabahı Akıllı Alışveriş Listesi
+### 4. 🛒 Pazartesi Sabahı Akıllı Alışveriş Listesi Önerisi
 * **Problem:** Markete gitmeden önce dolapları tek tek açıp neyin bittiğini veya azaldığını kontrol etmeye vakit ayıramamak.
 * **Çözüm:** Her Pazartesi saat 09:00'da tetiklenen akıllı stok motoru, belirlenen kritik eşiğin altına düşen tüm temel gıda ve tüketim malzemelerini tespit eder ve doğrudan hazır bir alışveriş listesi olarak e-posta gönderir.
 
-### 5. 🏡 Çoklu Mekan Yönetimi (Ev, Yazlık, Ofis)
+### 5. 🤖 Google Gemini Destekli Akıllı Kiler Şefi (`sef.php`)
+* **Problem:** Dolapta kalan ve son kullanma tarihi yaklaşan malzemelerle ne yemek yapacağını bilememek.
+* **Çözüm:** Kiler Şefi, dolabınızda bulunan malzemeleri ve öncelikli olarak SKT'si yaklaşan gıdaları analiz eder; Google Gemini AI motoru sayesinde elinizdeki malzemelerle yapabileceğiniz pratik, israfı önleyici yemek tarifleri sunar.
+
+### 6. 🏡 Çoklu Mekan Yönetimi (Ev, Yazlık, Ofis)
 * **Problem:** Hem ana evdeki hem yazlıktaki kilerin durumunu aynı panelde takip etmek, ancak kullanıcıların yalnızca yetkili oldukları lokasyonları görmesini istemek.
 * **Çözüm:** `Şehir > Mekan > Oda > Dolap > Raf` hiyerarşisi. Kullanıcı bazlı şehir yetkilendirmesi (IDOR korumalı) ile herkes yalnızca yetkili olduğu mülkün envanterini yönetebilir.
 
-### 6. 📱 Mobil Barkod Okuma ile Anında Tüketim
+### 7. 📱 Mobil Barkod Okuma ile Anında Tüketim
 * **Problem:** Dolaptan bir ürün aldığınızda stoktan düşmek için bilgisayar başına geçmenin zor olması.
 * **Çözüm:** Telefon kamerasıyla veya barkod okuyucu tabancayla ürün barkodunu tarayın; sistem ürünü anında tanır ve tek tıkla stoktan 1 adet düşer.
 
 ---
 
-## ✨ Öne Çıkan Özellikler
+## 🔔 Kademeli Bildirim Eşikleri Mimarisi
 
-* **📷 Mobil Arka Kamera & Barkod Tarayıcı:** iOS Safari ve Android Chrome'da doğrudan arka kamerayı açan Html5-Qrcode barkod tarayıcı.
-* **🌍 Global Veritabanı Desteği (Open Food Facts):** Kendi veritabanınızda bulunmayan bir barkod okutulduğunda ürün adı ve markası otomatik olarak internetten çekilir.
-* **📱 Progressive Web App (PWA):** Tarayıcıdan "Ana Ekrana Ekle" diyerek telefonunuza yerel uygulama gibi kurulabilir; çevrimdışı fallback ekranı barındırır.
-* **📑 Toplu Ürün Ekleme (Spreadsheet Deneyimi):** Kategori, Barkod, Marka, Ürün Adı, Miktar, SKT ve Dolap alanlarını tek bir sayfada hızlıca ekleyebileceğiniz dinamik tablo.
-* **⚖️ Standart Birim & Otomatik Eşik Motoru:** Türk market ve mutfak yapısına uygun 21 hazır ana kategori; `Et/Tavuk/Balık` için `Kg`, diğer tüm kategoriler için `Adet` standardizasyonu.
-* **📊 Excel / CSV İçe & Dışa Aktarma:** Mevcut envanteri Excel olarak indirebilme veya elinizdeki listeleri tek seferde sisteme yükleme.
-* **🌓 Modern & Duyarlı Arayüz:** Tailwind CSS ile geliştirilmiş, gece ve gündüz modları (Dark/Light Mode) ile tam uyumlu responsive tasarım.
+Sistem, ürünlerin son kullanma tarihine kalan gün sayısına göre **4 farklı önem seviyesinde (Severity)** otomatik bildirim üretir:
 
----
+| Kalan Gün | Bildirim Kademesi | Öncelik / Renk | Açıklama |
+| :---: | :---: | :---: | :--- |
+| **90 Gün** | Uzun Vadeli Takip | ⚪ Bilgi (Low) | Kilerde uzun ömürlü konserveler ve bakliyatlar için ilk erken uyarı |
+| **60 Gün** | 2 Ay Bildirimi | ⚪ Bilgi (Low) | Tüketim planlamasına dahil etme uyarısı |
+| **45 Gün** | 1.5 Ay Bildirimi | 🔵 Orta (Medium) | İlaçlar, vitaminler ve kuru gıdalar için ara kontrol |
+| **30 Gün** | 1 Ay Bildirimi | 🔵 Orta (Medium) | Ay bazlı menü planlamasına alma tavsiyesi |
+| **14 Gün** | 2 Hafta Bildirimi | 🟡 Yüksek (High) | Tüketim önceliğine geçiş |
+| **7 Gün** | 1 Hafta Bildirimi | 🟡 Yüksek (High) | Haftalık menüye zorunlu dahil etme |
+| **5 Gün** | 5 Gün Bildirimi | 🟠 Kritik (Critical) | Hızlı tüketim uyarısı |
+| **3 Gün** | 3 Gün Bildirimi | 🔴 Çok Kritik (Critical) | Acil tüketilmesi gereken taze ürünler (Süt, et, peynir vb.) |
+| **2 Gün** | 2 Gün Bildirimi | 🔴 Çok Kritik (Critical) | Kiler Şefi ile tarif üretilmesi önerilir |
+| **1 Gün** | Son Gün Uyarısı | 🔴 Son Çağrı (Critical) | Bozulmayı ve israfı önleyen son uyarı |
 
-## 🛡️ Güvenlik Mimarisi (OWASP Top 10)
-
-Platform kurumsal düzeyde güvenlik standartları ile inşa edilmiştir:
-* **SQL Injection Koruması:** Tüm veritabanı sorguları istisnasız `PDO Prepared Statements` kullanılarak çalıştırılır.
-* **CSRF (Cross-Site Request Forgery) Koruması:** Tüm durum değiştiren POST istekleri tek kullanımlık zaman aşımı olan CSRF tokenları ile doğrulanır.
-* **CSP (Content Security Policy) & Nonce:** Sayfa başına dinamik üretilen kriptografik `nonce` ile izinsiz JavaScript yürütülmesi engellenir.
-* **Brute-Force Kalkanı:** Başarısız giriş denemeleri IP ve kullanıcı adı bazında takip edilir, aşırı denemelerde hesap geçici olarak kilitlenir.
-* **Yetkilendirme & IDOR Koruması:** Dolap transferleri, şehir seçimleri ve ürün silme işlemleri sunucu tarafında kullanıcının yetki matrisine göre denetlenir.
-* **Audit & Sistem Logları:** Kritik tüm işlemler (silme, güncelleme, aktarma) IP ve kullanıcı bilgisiyle loglanır; log dosyalarına dış web erişimi engellenmiştir.
+> 💡 **Not:** Bu eşikler veritabanındaki `notification_thresholds` tablosunda saklanır ve web panelindeki **Bildirim Ayarları** sayfasından dilediğiniz zaman güncellenebilir veya yeni günler eklenebilir.
 
 ---
 
-## 🚀 Kurulum
+## 🛠️ Sistem Gereksinimleri
 
-### Yöntem 1: Web Kurulum Sihirbazı (Önerilen — 1 Dakika)
+Kuruluma başlamadan önce sunucunuzun veya barındırma ortamınızın aşağıdaki gereksinimleri karşıladığından emin olun:
 
-1. Proje dosyalarını web sunucunuza (Apache, LiteSpeed, Nginx) veya yerel geliştirme ortamınıza (XAMPP, Laragon, Docker) yükleyin.
-2. Tarayıcınızdan `http://localhost/stok-takip/install.php` (veya alan adınız) adresine gidin.
-3. Açılan kurulum sihirbazında:
-   - MySQL veritabanı bağlantı bilgilerinizi girin.
-   - Yönetici kullanıcı adı ve şifrenizi belirleyin.
-   - **"Kurulumu Başlat"** butonuna tıklayın.
-4. Sihirbaz veritabanı tablolarını, **21 hazır kategoriyi**, yüzlerce alt kategoriyi, standart birimleri ve başlangıç dolaplarını otomatik olarak oluşturur, `.env` dosyasını yazar ve kendini kilitler.
-5. Kurulum bittikten sonra doğrudan `login.php` üzerinden giriş yapabilirsiniz!
-
----
-
-### Yöntem 2: Manuel Kurulum
-
-1. Depoyu klonlayın:
-   ```bash
-   git clone https://github.com/kullanici-adiniz/stok-takip.git
-   ```
-2. `.env.example` dosyasını `.env` olarak kopyalayın ve veritabanı bilgilerinizi girin:
-   ```env
-   DB_HOST="localhost"
-   DB_NAME="stok_takip"
-   DB_USER="root"
-   DB_PASS="sifreniz"
-   CRON_SECRET_KEY="rastgele_guclu_bir_token"
-   ```
-3. Boş MySQL veritabanınıza `install.php` sihirbazını çalıştırarak veya temiz şema dosyasını içe aktararak tabloları oluşturun.
+* **PHP:** `7.4` veya `8.0+` (PHP 8.1 / 8.2 / 8.3 ile tam uyumludur)
+* **PHP Eklentileri (Extensions):**
+  * `pdo_mysql` (Veritabanı iletişimi için zorunlu)
+  * `fileinfo` (Excel/CSV yükleme güvenlik kontrolleri için)
+  * `openssl` (Güvenli oturum ve token üretimi için)
+  * `curl` (Open Food Facts ve Gemini API bağlantıları için)
+* **Veritabanı:** MySQL `5.7+` veya MariaDB `10.3+`
+* **Web Sunucusu:** Apache (önerilen), LiteSpeed veya Nginx (URL rewrite destekli)
+* **Modüller:** Apache `mod_rewrite` ve `mod_headers` aktif olmalıdır (güvenlik başlıkları ve `.htaccess` için)
 
 ---
 
-## ⏰ Otomatik E-Posta Raporları (Cron Ayarları)
+## 🚀 Detaylı Kurulum Rehberi
 
-Sistemde iki farklı amaca hizmet eden otomatik e-posta raporu bulunmaktadır. Sunucunuzun cPanel veya Crontab paneline şu komutları ekleyebilirsiniz:
+Stok Takip sistemi, kurulumu herkes için zahmetsiz hale getiren **Otomatik Kurulum Sihirbazı (Turnkey Installer)** ile birlikte gelir. Sıfırdan bir sunucuya kurmak yalnızca 1-2 dakika sürer.
 
-```bash
-# 1. Günlük SKT Yaklaşan Ürünler Raporu (Her sabah saat 08:00'de)
-0 8 * * * curl -s "https://siteniz.com/cron-mail.php?tip=skt&token=CRON_SECRET_KEY" > /dev/null 2>&1
-
-# 2. Haftalık Akıllı Alışveriş Listesi Önerisi (Her Pazartesi saat 09:00'da)
-0 9 * * 1 curl -s "https://siteniz.com/cron-mail.php?tip=alisveris&token=CRON_SECRET_KEY" > /dev/null 2>&1
+```
+İndir / Yükle ──▶ Tarayıcıdan Aç ──▶ install.php Formunu Doldur ──▶ Tamamlandı!
 ```
 
 ---
 
-## 📁 Proje Dizin Yapısı
+### YÖNTEM 1: Otomatik Web Kurulum Sihirbazı (Önerilen)
+
+#### Adım 1: Dosyaları Sunucuya Yükleyin
+Proje dizinindeki tüm dosyaları web sunucunuza yükleyin:
+* **cPanel / Plesk Hosting:** Dosyaları `public_html/` veya `public_html/stok-takip/` klasörüne yükleyin.
+* **XAMPP (Yerel):** `C:\xampp\htdocs\stok-takip\` klasörüne kopyalayın.
+* **Laragon (Yerel):** `C:\laragon\www\stok-takip\` klasörüne kopyalayın.
+
+#### Adım 2: Kurulum Sihirbazını Başlatın
+Tarayıcınızı açın ve sitenizin adresine gidin:
+```
+http://localhost/stok-takip/
+veya
+https://siteniz.com/stok-takip/
+```
+> ✨ **Akıllı Yönlendirme:** Sistem henüz kurulmamışsa `index.php`'ye gitseniz bile otomatik olarak doğrudan `install.php` kurulum sihirbazına yönlendirilirsiniz.
+
+#### Adım 3: Kurulum Formunu Doldurun
+Kurulum sihirbazında yer alan 6 ana bölümü yapılandırın:
+
+1. **🌐 Uygulama Ayarları:**
+   * **Ortam (`APP_ENV`):** Canlı sunucu için `production`, yerel test için `local` seçin.
+   * **Kurulu Web Dizini (`APP_URL`):** Sistem sunucunuzdan tam adresi **otomatik algılar** (Örn: `https://siteniz.com/stok-takip`). E-posta linklerinin doğru çalışması için bu adres kullanılır.
+2. **🗄️ Veritabanı Bağlantısı (MySQL):**
+   * **Sunucu (`DB_HOST`):** Genellikle `localhost`.
+   * **Veritabanı Adı (`DB_NAME`):** cPanel'de oluşturduğunuz veritabanı adı (Örn: `kullanici_stoktakip`).
+   * **Kullanıcı Adı (`DB_USER`):** Veritabanı kullanıcı adı.
+   * **Şifre (`DB_PASS`):** Veritabanı kullanıcısının şifresi.
+3. **👤 İlk Yönetici Hesabı:**
+   * Panele giriş yapacağınız yönetici kullanıcı adı, e-posta adresi ve en az 6 karakterli güçlü bir şifre belirleyin.
+4. **🛡️ Cron ve Güvenlik:**
+   * **Cron Tokenı (`CRON_SECRET`):** Otomatik e-posta motorunun yetkisiz kişilerce tetiklenmesini engelleyen güvenlik anahtarıdır. Sistem sizin için **otomatik 32 karakterlik rastgele güvenli anahtar** üretir.
+5. **🤖 Google Gemini API (Opsiyonel):**
+   * Akıllı Kiler Şefi (`sef.php`) için [Google AI Studio](https://aistudio.google.com/)'dan **ücretsiz** alacağınız API anahtarı. Boş bırakıp daha sonra da ekleyebilirsiniz.
+6. **📧 SMTP E-Posta Bildirim Ayarları (Opsiyonel):**
+   * Günlük SKT raporları ve haftalık alışveriş listelerinin e-posta kutunuza gelmesi için SMTP sunucu bilgileriniz:
+     * `SMTP_HOST`: Örn. `mail.domain.com.tr` veya `smtp.gmail.com`
+     * `SMTP_PORT`: Örn. `587` (TLS için) veya `465` (SSL için)
+     * `SMTP_USER` & `SMTP_PASS`: Mail adresi ve şifresi
+     * `SMTP_SECURE`: `tls` (önerilen) / `ssl` / `none`
+     * `MAIL_FROM_ADDRESS`: Gönderen e-posta adresi
+     * `MAIL_FROM_NAME`: Gönderen ismi (Varsayılan: `StokTakip Bildirim`)
+
+#### Adım 4: "Kurulumu Başlat" Butonuna Tıklayın
+Sihirbaz tek tıklamayla:
+* Tüm tabloları (`products`, `categories`, `product_types`, `notifications`, `audit_logs` vb.) oluşturur.
+* **21 ana kategori** ve yüzlerce hazır alt kategoriyi ekler.
+* Cins bazlı akıllı stok eşiklerini ve standart birimleri (Et: Kg, diğerleri: Adet) tanımlar.
+* **10 kademeli bildirim günlerini** (`90, 60, 45, 30, 14, 7, 5, 3, 2, 1`) kaydeder.
+* Başlangıç konumu hiyerarşisini (Ev > Mutfak > Buzdolabı & Kiler Dolabı) oluşturur.
+* Yönetici hesabınızı oluşturup yetkilendirir.
+* Tüm ayarları içeren `.env` dosyasını otomatik yazar ve güvenliğiniz için `installed.lock` dosyasını oluşturur.
+
+---
+
+### YÖNTEM 2: Manuel Kurulum (.env ile)
+
+Eğer komut satırı veya FTP üzerinden manuel kurulum yapmayı tercih ediyorsanız:
+
+1. Depoyu klonlayın veya indirin:
+   ```bash
+   git clone https://github.com/haktanbozer/stoktakip.git
+   ```
+2. `.env.example` dosyasının adını `.env` olarak değiştirin ve düzenleyin:
+   ```env
+   # --- UYGULAMA AYARLARI ---
+   APP_ENV=production
+   APP_URL="https://siteniz.com/stok-takip"
+
+   # --- VERİTABANI AYARLARI ---
+   DB_HOST=localhost
+   DB_NAME=stok_takip
+   DB_USER=stok_kullanici
+   DB_PASS=parolaniz
+
+   # Cron ve Güvenlik
+   CRON_SECRET=rastgele_guclu_bir_anahtar_giriniz
+   APP_URL=https://siteniz.com/stok-takip
+
+   # --- GOOGLE GEMINI API ---
+   GEMINI_API_KEY=AIzaSy...
+
+   # --- SMTP MAIL AYARLARI ---
+   SMTP_HOST=mail.domain.com.tr
+   SMTP_USER=bildirim@domain.com.tr
+   SMTP_PASS=mail_sifreniz
+   SMTP_PORT=587
+   SMTP_SECURE=tls
+   MAIL_FROM_ADDRESS="bildirim@domain.com.tr"
+   MAIL_FROM_NAME="StokTakip Bildirim"
+   ```
+3. Tarayıcınızdan `install.php` dosyasını bir kez çalıştırarak veritabanı tablolarının ve kategorilerin otomatik yüklenmesini sağlayın.
+
+---
+
+## ⏱️ Otomatik Rapor Cron Kurulumu (cPanel & Crontab)
+
+Sistemdeki e-posta raporlama motoru iki temel görevi yerine getirir:
+1. **Günlük SKT Raporu:** Belirlenen eşiklere (90, 60, 45, 30, 14, 7, 5, 3, 2, 1 gün) giren ürünleri listeler.
+2. **Pazartesi Alışveriş Listesi:** Kritik stok eşiğinin altına düşen ürünleri tespit edip market takviye listesi sunar.
+
+### cPanel Üzerinden Cron Görevi Ekleme:
+1. cPanel kontrol panelinize giriş yapın ve **Cron Jobs (Zamanlanmış Görevler)** sayfasına gidin.
+2. **Ortak Ayarlar (Common Settings):** "Günde Bir Kez (0 8 * * *)" veya sabah 08:00 olarak seçin.
+3. **Komut (Command)** satırına şunu yapıştırın:
+   ```bash
+   curl -s "https://siteniz.com/stok-takip/cron-mail.php?token=CRON_SECRET_ANAHTARINIZ" > /dev/null 2>&1
+   ```
+
+### Crontab (Linux / VPS) İle Ayarlama:
+Terminalden `crontab -e` komutunu çalıştırın ve aşağıdaki satırları ekleyin:
+
+```bash
+# Otomatik Mod: Her sabah 08:00'de çalışır (Her gün SKT kontrolü yapar, Pazartesi günleri ayrıca Alışveriş Listesi ekler):
+0 8 * * * curl -s "https://siteniz.com/stok-takip/cron-mail.php?token=CRON_SECRET" > /dev/null 2>&1
+
+# Sadece Günlük SKT Raporu (İsteğe bağlı ayrı çalıştırmak için):
+0 8 * * * curl -s "https://siteniz.com/stok-takip/cron-mail.php?tip=skt&token=CRON_SECRET" > /dev/null 2>&1
+
+# Sadece Pazartesi Alışveriş Listesi (Her Pazartesi saat 09:00'da):
+0 9 * * 1 curl -s "https://siteniz.com/stok-takip/cron-mail.php?tip=alisveris&token=CRON_SECRET" > /dev/null 2>&1
+```
+
+---
+
+## 📱 PWA (Mobil Uygulama Olarak Kurulum)
+
+Stok Takip, modern **Progressive Web App (PWA)** standartlarını tam olarak destekler:
+
+1. Telefonunuzun tarayıcısından (iOS Safari veya Android Chrome) sisteme giriş yapın.
+2. **Safari (iOS):** Paylaş butonuna basıp **"Ana Ekrana Ekle"** seçeneğini seçin.
+3. **Chrome (Android):** Sağ üstteki menüden **"Uygulamayı Yükle"** veya **"Ana Ekrana Ekle"** butonuna dokunun.
+4. Uygulama telefonunuzun ana ekranında yerel bir mobil uygulama gibi ikonlaşacak; tam ekran modunda, adres çubuğu olmadan ve çevrimdışı önbellekleme desteğiyle çalışacaktır.
+
+---
+
+## 🛡️ Güvenlik Tavsiyeleri (Canlı Sunucu İçin)
+
+* **`install.php` Güvenliği:** Kurulum tamamlandığında sistem `installed.lock` oluşturarak sihirbazı otomatik kilitler. Ek güvenlik için kurulum tamamlandıktan sonra `install.php` dosyasını sunucunuzdan silebilir veya adını değiştirebilirsiniz.
+* **`.env` Dosyası:** Web sunucunuzdaki `.htaccess` dosyası `.env`, `.log` ve `sessions/` dizinlerine dışarıdan doğrudan erişimi varsayılan olarak engeller. Bu dosyayı asla silmeyin.
+* **HTTPS Kullanımı:** Kamera ile barkod tarama özelliğinin (WebRTC) iOS Safari ve Android Chrome üzerinde çalışabilmesi için sitenizin **HTTPS (SSL)** protokolüyle çalışması gerekmektedir (Yerel ağda `localhost` üzerinde SSL olmadan da çalışır).
+
+---
+
+## 📁 Proje Dizin Mimarisi
 
 ```
 stok-takip/
-├── icons/                  # PWA uygulama ikonları ve manifest varlıkları
+├── icons/                  # PWA mobil uygulama ikonları (72x72 -> 512x512)
 ├── logs/                   # Güvenli sistem ve hata logları (.htaccess ile kilitli)
-├── sessions/               # Güvenli oturum dosyaları
+├── PHPMailer/              # SMTP e-posta gönderim kütüphanesi (v6.9)
+├── sessions/               # Güvenli PHP oturum dosyaları
 ├── ajax.php                # Dinamik AJAX uç noktaları ve API işlemleri
 ├── bildirim-ayarlari.php   # Bildirim günleri ve kritik eşik tercihleri
 ├── cron-mail.php           # Otomatik e-posta bildirim motoru (SKT & Alışveriş)
-├── db.php                  # PDO bağlantısı, CSP nonceleri, oturum ve güvenlik kalkanı
+├── db.php                  # PDO bağlantısı, CSP nonce'ları, oturum ve güvenlik kalkanı
 ├── envanter.php            # Gelişmiş filtreleme ve arama destekli stok listesi
 ├── excel-export.php        # CSV / Excel dışa aktarma servisi
 ├── excel-import.php        # Toplu CSV / Excel içe aktarma servisi
 ├── hizli-tuket.php         # Kamera ile anında barkod okuma ve tüketim ekranı
-├── install.php             # Tek tıkla otomatik kurulum sihirbazı
+├── install.php             # Tek tıkla otomatik kurulum sihirbazı (Turnkey Installer)
 ├── kategoriler.php         # Kategori, alt kategori ve cins yönetim paneli
 ├── login.php               # Güvenli giriş ekranı ve brute-force koruması
 ├── mekan-yonetimi.php      # Şehir, mekan, oda ve dolap yönetim paneli
+├── sef.php                 # Yapay zeka destekli Akıllı Kiler Şefi (Google Gemini)
 ├── toplu-ekle.php          # Çoklu ürün giriş tablosu (Kamera + Barkod Sorgulama)
 ├── urun-ekle.php           # Adım adım ürün ekleme sihirbazı
 ├── urun-duzenle.php        # Ürün düzenleme ve lokasyon güncelleme
-├── manifest.json           # PWA Web App manifesti
-├── sw.js                   # PWA Service Worker (Çevrimdışı önbellekleme)
+├── manifest.json           # PWA Web App manifest dosyası
+├── sw.js                   # PWA Service Worker (Çevrimdışı fallback ve cache)
 ├── .env.example            # Örnek çevre değişkenleri şablonu
-└── README.md               # Proje dökümantasyonu
+├── .gitignore              # Hassas dosyaları engelleyen kurallar
+├── .htaccess               # Apache güvenlik ve mod_rewrite başlıkları
+└── README.md               # Kapsamlı proje dokümantasyonu
 ```
-
----
-
-## 🛠️ Teknoloji Yığını
-
-* **Sunucu Tarafı:** PHP 7.4+ / 8.0+ / 8.1+ / 8.2+ (Vanilla PHP, PDO)
-* **Veritabanı:** MySQL 5.7+ / MariaDB 10.3+
-* **Arayüz:** HTML5, Tailwind CSS, DataTables, SweetAlert2
-* **Barkod & Kamera:** Html5-Qrcode JavaScript Library
-* **Harici Entegrasyon:** Open Food Facts REST API
-* **Mobil Standart:** Progressive Web App (PWA), Service Worker v2
 
 ---
 
 ## 📄 Lisans
 
-Bu proje **[MIT Lisansı](LICENSE)** kapsamında lisanslanmıştır. Dilediğiniz gibi kullanabilir, özelleştirebilir ve geliştirebilirsiniz.
+Bu proje **[MIT Lisansı](LICENSE)** kapsamında açık kaynaklı olarak lisanslanmıştır. Dilediğiniz gibi özgürce kullanabilir, kişisel veya kurumsal ihtiyaçlarınıza göre uyarlayabilirsiniz.
