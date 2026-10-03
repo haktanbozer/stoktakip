@@ -72,7 +72,7 @@ if ($raporTipi === 'skt') {
 $stmt = $pdo->query("SELECT days FROM notification_thresholds");
 $bildirimGunleri = $stmt->fetchAll(PDO::FETCH_COLUMN);
 if (empty($bildirimGunleri)) {
-    $bildirimGunleri = [90, 60, 30, 7, 3, 1];
+    $bildirimGunleri = [90, 60, 45, 30, 14, 7, 5, 3, 2, 1];
 }
 
 $bugun = new DateTime('today');
