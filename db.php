@@ -26,6 +26,26 @@ function yukleEnv($yol) {
 
 yukleEnv(__DIR__ . '/.env');
 
+// 1.1. Kurulum Kontrolü: .env veya installed.lock yoksa ve install.php mevcutsa otomatik yönlendir
+if (php_sapi_name() !== 'cli') {
+    $lockVarMi = file_exists(__DIR__ . '/installed.lock');
+    $envVarMi  = file_exists(__DIR__ . '/.env');
+    $instVarMi = file_exists(__DIR__ . '/install.php');
+    
+    if ((!$envVarMi || !$lockVarMi) && $instVarMi) {
+        $calisanDosya = basename($_SERVER['SCRIPT_NAME'] ?? '');
+        if ($calisanDosya !== 'install.php') {
+            if (!headers_sent()) {
+                header("Location: install.php");
+                exit;
+            } else {
+                echo "<script>window.location.href='install.php';</script>";
+                exit;
+            }
+        }
+    }
+}
+
 // 2. Session ve Klasör Güvenliği
 $session_folder = __DIR__ . '/sessions';
 if (!file_exists($session_folder)) { 
@@ -149,6 +169,10 @@ $pass    = getenv('DB_PASS');
 $charset = 'utf8mb4';
 
 if (!$host || !$db || !$user) {
+    if (php_sapi_name() !== 'cli' && file_exists(__DIR__ . '/install.php') && !file_exists(__DIR__ . '/installed.lock')) {
+        header("Location: install.php");
+        exit;
+    }
     die("Veritabanı yapılandırma hatası. .env dosyası eksik veya hatalı.");
 }
 
