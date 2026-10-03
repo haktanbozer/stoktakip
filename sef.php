@@ -3,7 +3,7 @@
 require 'db.php';
 girisKontrol();
 
-$apiKey = getenv('GEMINI_API_KEY'); 
+$apiKey = getenv('GEMINI_API_KEY') ?: ($_ENV['GEMINI_API_KEY'] ?? ($_SERVER['GEMINI_API_KEY'] ?? '')); 
 $mesaj = '';
 $tarif = '';
 

@@ -124,11 +124,17 @@ function urunleriGetir(PDO $pdo, ?array $sehirIdler = null): array {
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+// --- UYGULAMA VE URL AYARLARI ---
+$appUrl = rtrim(getenv('APP_URL') ?: ($_ENV['APP_URL'] ?? ($_SERVER['APP_URL'] ?? 'http://localhost/stok-takip')), '/');
+
 // --- SMTP AYARLARI ---
-$smtpHost = getenv('SMTP_HOST') ?: ($_ENV['SMTP_HOST'] ?? '');
-$smtpUser = getenv('SMTP_USER') ?: ($_ENV['SMTP_USER'] ?? '');
-$smtpPass = getenv('SMTP_PASS') ?: ($_ENV['SMTP_PASS'] ?? '');
-$smtpPort = (int)(getenv('SMTP_PORT') ?: ($_ENV['SMTP_PORT'] ?? 587));
+$smtpHost        = getenv('SMTP_HOST') ?: ($_ENV['SMTP_HOST'] ?? ($_SERVER['SMTP_HOST'] ?? ''));
+$smtpUser        = getenv('SMTP_USER') ?: ($_ENV['SMTP_USER'] ?? ($_SERVER['SMTP_USER'] ?? ''));
+$smtpPass        = getenv('SMTP_PASS') ?: ($_ENV['SMTP_PASS'] ?? ($_SERVER['SMTP_PASS'] ?? ''));
+$smtpPort        = (int)(getenv('SMTP_PORT') ?: ($_ENV['SMTP_PORT'] ?? ($_SERVER['SMTP_PORT'] ?? 587)));
+$smtpSecure      = strtolower(getenv('SMTP_SECURE') ?: ($_ENV['SMTP_SECURE'] ?? ($_SERVER['SMTP_SECURE'] ?? 'tls')));
+$mailFromAddress = getenv('MAIL_FROM_ADDRESS') ?: ($_ENV['MAIL_FROM_ADDRESS'] ?? ($_SERVER['MAIL_FROM_ADDRESS'] ?? $smtpUser));
+$mailFromName    = getenv('MAIL_FROM_NAME') ?: ($_ENV['MAIL_FROM_NAME'] ?? ($_SERVER['MAIL_FROM_NAME'] ?? 'StokTakip Bildirim'));
 
 if (!$smtpHost || !$smtpUser || !$smtpPass) {
     if (function_exists('sistemLogla')) {
@@ -137,7 +143,7 @@ if (!$smtpHost || !$smtpUser || !$smtpPass) {
     die("SMTP ayarları eksik. Lütfen .env dosyasındaki SMTP_HOST, SMTP_USER, SMTP_PASS alanlarını kontrol edin.");
 }
 
-function createMailer($smtpHost, $smtpUser, $smtpPass, $smtpPort) {
+function createMailer($smtpHost, $smtpUser, $smtpPass, $smtpPort, $smtpSecure = 'tls', $mailFrom = '', $mailFromName = '') {
     $mail = new PHPMailer(true);
     $mail->CharSet   = 'UTF-8';
     $mail->isSMTP();
@@ -145,9 +151,18 @@ function createMailer($smtpHost, $smtpUser, $smtpPass, $smtpPort) {
     $mail->SMTPAuth   = true;
     $mail->Username   = $smtpUser;
     $mail->Password   = $smtpPass;
-    $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+    if ($smtpSecure === 'ssl') {
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+    } elseif ($smtpSecure === 'tls') {
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+    } else {
+        $mail->SMTPSecure = false;
+        $mail->SMTPAutoTLS = false;
+    }
     $mail->Port       = $smtpPort;
-    $mail->setFrom($smtpUser, 'Ev Stok Takip');
+    $fromAddr = !empty($mailFrom) ? $mailFrom : $smtpUser;
+    $fromName = !empty($mailFromName) ? $mailFromName : 'StokTakip Bildirim';
+    $mail->setFrom($fromAddr, $fromName);
     $mail->isHTML(true);
     return $mail;
 }
@@ -265,7 +280,7 @@ foreach ($kullanicilar as $kullanici) {
                             </tbody>
                         </table>
                         <div style='margin-top:24px; text-align:center;'>
-                            <a href='https://bozer.com.tr/stok-takip/envanter.php' style='background:#ea580c; color:#ffffff; text-decoration:none; padding:10px 20px; border-radius:8px; font-weight:bold; font-size:13px; display:inline-block;'>Envanteri Görüntüle</a>
+                            <a href='{$appUrl}/envanter.php' style='background:#ea580c; color:#ffffff; text-decoration:none; padding:10px 20px; border-radius:8px; font-weight:bold; font-size:13px; display:inline-block;'>Envanteri Görüntüle</a>
                         </div>
                     </div>
                     <div style='background:#f1f5f9; padding:12px 24px; font-size:11px; color:#94a3b8; text-align:center;'>
@@ -277,7 +292,7 @@ foreach ($kullanicilar as $kullanici) {
             $konu = "⏳ Günlük SKT Raporu: {$sktUyarisiSayisi} Ürünün Tarihi Yaklaşıyor (" . date('d.m.Y') . ")";
 
             try {
-                $mail = createMailer($smtpHost, $smtpUser, $smtpPass, $smtpPort);
+                $mail = createMailer($smtpHost, $smtpUser, $smtpPass, $smtpPort, $smtpSecure, $mailFromAddress, $mailFromName);
                 $mail->Subject = $konu;
                 $mail->Body    = $sktMailGovde;
                 $mail->addAddress($kullanici['email']);
@@ -433,7 +448,7 @@ foreach ($kullanicilar as $kullanici) {
                             </tbody>
                         </table>
                         <div style='margin-top:24px; text-align:center;'>
-                            <a href='https://bozer.com.tr/stok-takip/envanter.php' style='background:#2563eb; color:#ffffff; text-decoration:none; padding:10px 20px; border-radius:8px; font-weight:bold; font-size:13px; display:inline-block;'>Stokları Yönet</a>
+                            <a href='{$appUrl}/envanter.php' style='background:#2563eb; color:#ffffff; text-decoration:none; padding:10px 20px; border-radius:8px; font-weight:bold; font-size:13px; display:inline-block;'>Stokları Yönet</a>
                         </div>
                     </div>
                     <div style='background:#f1f5f9; padding:12px 24px; font-size:11px; color:#94a3b8; text-align:center;'>
@@ -445,7 +460,7 @@ foreach ($kullanicilar as $kullanici) {
             $konu = "🛒 Haftalık Alışveriş Listesi: {$alisverisMaddeSayisi} Ürün İçin Takviye Önerisi (" . date('d.m.Y') . ")";
 
             try {
-                $mail = createMailer($smtpHost, $smtpUser, $smtpPass, $smtpPort);
+                $mail = createMailer($smtpHost, $smtpUser, $smtpPass, $smtpPort, $smtpSecure, $mailFromAddress, $mailFromName);
                 $mail->Subject = $konu;
                 $mail->Body    = $alisverisMailGovde;
                 $mail->addAddress($kullanici['email']);

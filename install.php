@@ -39,13 +39,51 @@ $basari = '';
 $adim   = 'form';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['kurulum_yap'])) {
+    // 1. Uygulama Ayarları
+    $appEnv  = trim($_POST['app_env'] ?? 'production');
+    $appUrl  = rtrim(trim($_POST['app_url'] ?? ''), '/');
+    if (empty($appUrl)) {
+        $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://';
+        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $uriDir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/');
+        $appUrl = $protocol . $host . $uriDir;
+    }
+
+    // 2. Veritabanı Ayarları
     $dbHost     = trim($_POST['db_host'] ?? 'localhost');
     $dbName     = trim($_POST['db_name'] ?? '');
     $dbUser     = trim($_POST['db_user'] ?? '');
     $dbPass     = trim($_POST['db_pass'] ?? '');
+
+    // 3. Yönetici Hesabı
     $adminUser  = trim($_POST['admin_user'] ?? 'admin');
     $adminEmail = trim($_POST['admin_email'] ?? 'admin@example.com');
     $adminPass  = trim($_POST['admin_pass'] ?? '');
+
+    // 4. Cron ve Güvenlik
+    $cronSecret = trim($_POST['cron_secret'] ?? '');
+    if (empty($cronSecret)) {
+        $cronSecret = bin2hex(random_bytes(16));
+    }
+
+    // 5. Google Gemini API (Opsiyonel)
+    $geminiApiKey = trim($_POST['gemini_api_key'] ?? '');
+
+    // 6. SMTP E-Posta Ayarları (Opsiyonel)
+    $smtpHost        = trim($_POST['smtp_host'] ?? '');
+    $smtpPort        = (int)($_POST['smtp_port'] ?? 587);
+    if ($smtpPort <= 0) $smtpPort = 587;
+    $smtpUser        = trim($_POST['smtp_user'] ?? '');
+    $smtpPass        = trim($_POST['smtp_pass'] ?? '');
+    $smtpSecure      = trim($_POST['smtp_secure'] ?? 'tls');
+    $mailFromAddress = trim($_POST['mail_from_address'] ?? '');
+    if (empty($mailFromAddress)) {
+        $mailFromAddress = !empty($smtpUser) ? $smtpUser : $adminEmail;
+    }
+    $mailFromName    = trim($_POST['mail_from_name'] ?? 'StokTakip Bildirim');
+    if (empty($mailFromName)) {
+        $mailFromName = 'StokTakip Bildirim';
+    }
 
     if (empty($dbHost) || empty($dbName) || empty($dbUser)) {
         $hata = 'Veritabanı sunucusu, veritabanı adı ve veritabanı kullanıcı adı zorunludur.';
@@ -407,21 +445,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['kurulum_yap'])) {
             // Yöneticiye şehri ata
             $pdo->prepare("INSERT INTO `user_city_assignments` (`user_id`, `city_id`) VALUES (?, ?)")->execute([$adminId, $cityId]);
 
-            // 9. Rastgele Güvenli Cron Token Üret
-            $cronToken = bin2hex(random_bytes(16));
-
-            // 10. .env Dosyasını Oluştur
-            $envIcerik = "# Stok Takip Çevre Değişkenleri\n"
-                       . "DB_HOST=\"$dbHost\"\n"
-                       . "DB_NAME=\"$dbName\"\n"
-                       . "DB_USER=\"$dbUser\"\n"
-                       . "DB_PASS=\"$dbPass\"\n\n"
-                       . "# E-Posta Raporları & Cron Güvenlik Tokenı\n"
-                       . "CRON_SECRET_KEY=\"$cronToken\"\n";
+            // 9. .env Dosyasını Kullanıcı Formatında Eksiksiz Oluştur
+            $envIcerik = "# --- UYGULAMA AYARLARI ---\n"
+                       . "APP_ENV={$appEnv}\n"
+                       . "APP_URL=\"{$appUrl}\"\n\n"
+                       . "# --- VERİTABANI AYARLARI ---\n"
+                       . "DB_HOST={$dbHost}\n"
+                       . "DB_NAME={$dbName}\n"
+                       . "DB_USER={$dbUser}\n"
+                       . "DB_PASS={$dbPass}\n\n"
+                       . "# Cron ve Güvenlik\n"
+                       . "CRON_SECRET={$cronSecret}\n"
+                       . "APP_URL={$appUrl}\n\n"
+                       . "# --- GOOGLE GEMINI API ---\n"
+                       . "GEMINI_API_KEY={$geminiApiKey}\n\n"
+                       . "# --- SMTP MAIL AYARLARI ---\n"
+                       . "SMTP_HOST={$smtpHost}\n"
+                       . "SMTP_USER={$smtpUser}\n"
+                       . "SMTP_PASS={$smtpPass}\n"
+                       . "SMTP_PORT={$smtpPort}\n"
+                       . "SMTP_SECURE={$smtpSecure}\n"
+                       . "MAIL_FROM_ADDRESS=\"{$mailFromAddress}\"\n"
+                       . "MAIL_FROM_NAME=\"{$mailFromName}\"\n";
 
             file_put_contents($envFile, $envIcerik);
 
-            // 11. Kurulum Kilidi Oluştur
+            // 10. Kurulum Kilidi Oluştur
             file_put_contents($lockFile, "Kurulum tamamlandı: " . date('Y-m-d H:i:s'));
 
             $adim = 'tamamlandi';
@@ -430,6 +479,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['kurulum_yap'])) {
         }
     }
 }
+
+// Otomatik varsayılan değerleri hazırla
+$detectedProtocol  = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://';
+$detectedHost      = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$detectedDir       = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/');
+$defaultAppUrl     = $detectedProtocol . $detectedHost . $detectedDir;
+$defaultCronSecret = bin2hex(random_bytes(16));
 ?>
 <!DOCTYPE html>
 <html lang="tr">
@@ -441,13 +497,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['kurulum_yap'])) {
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen py-10 px-4 flex items-center justify-center">
 
-<div class="max-w-xl w-full bg-slate-800 border border-slate-700 rounded-3xl p-6 sm:p-8 shadow-2xl">
+<div class="max-w-2xl w-full bg-slate-800 border border-slate-700 rounded-3xl p-6 sm:p-8 shadow-2xl">
     
     <div class="flex items-center gap-3 mb-6 pb-4 border-b border-slate-700/80">
         <div class="w-12 h-12 bg-blue-600/20 text-blue-400 rounded-2xl flex items-center justify-center text-2xl font-bold">📦</div>
         <div>
             <h1 class="text-xl font-bold text-white">Stok Takip Kurulum Sihirbazı</h1>
-            <p class="text-xs text-slate-400">Veritabanı, hazır kategoriler ve yönetici hesabı oluşturma</p>
+            <p class="text-xs text-slate-400">Veritabanı, ortam ayarları, mail, AI ve yönetici hesabı yapılandırması</p>
         </div>
     </div>
 
@@ -462,15 +518,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['kurulum_yap'])) {
             <div class="w-16 h-16 bg-emerald-500/20 text-emerald-400 rounded-2xl flex items-center justify-center text-3xl mx-auto">✅</div>
             <h2 class="text-2xl font-extrabold text-white">Kurulum Başarıyla Tamamlandı!</h2>
             <p class="text-slate-300 text-sm">
-                Tüm veritabanı tabloları, <strong>21 hazır kategori</strong>, yüzlerce alt kategori, standart birimler, bildirim eşikleri ve başlangıç konumu oluşturuldu.
+                Tüm veritabanı tabloları, <strong>21 hazır kategori</strong>, cins bazlı akıllı stok eşikleri ve <code>.env</code> yapılandırması oluşturuldu.
             </p>
-            <div class="p-4 bg-slate-900/80 border border-slate-700 rounded-xl text-left text-xs space-y-1.5 text-slate-300 font-mono">
-                <div>• Yönetici: <strong class="text-blue-400"><?= htmlspecialchars($adminUser) ?></strong></div>
-                <div>• E-Posta: <strong class="text-blue-400"><?= htmlspecialchars($adminEmail) ?></strong></div>
-                <div>• Cron Token: <strong class="text-amber-400"><?= htmlspecialchars($cronToken) ?></strong></div>
-                <div>• Konfigürasyon: <strong class="text-emerald-400">.env oluşturuldu</strong></div>
+            <div class="p-4 bg-slate-900/80 border border-slate-700 rounded-xl text-left text-xs space-y-2 text-slate-300 font-mono">
+                <div>• Yönetici Hesabı: <strong class="text-blue-400"><?= htmlspecialchars($adminUser) ?></strong> (<?= htmlspecialchars($adminEmail) ?>)</div>
+                <div>• Uygulama URL: <strong class="text-blue-400"><?= htmlspecialchars($appUrl) ?></strong></div>
+                <div>• Cron Gizli Anahtarı: <strong class="text-amber-400"><?= htmlspecialchars($cronSecret) ?></strong></div>
+                <div>• Gemini AI: <strong class="<?= !empty($geminiApiKey) ? 'text-emerald-400' : 'text-slate-500' ?>"><?= !empty($geminiApiKey) ? 'Aktif' : 'Tanımlanmadı (Opsiyonel)' ?></strong></div>
+                <div>• SMTP E-Posta: <strong class="<?= !empty($smtpHost) ? 'text-emerald-400' : 'text-slate-500' ?>"><?= !empty($smtpHost) ? htmlspecialchars($smtpHost . ' (' . $mailFromAddress . ')') : 'Tanımlanmadı (Opsiyonel)' ?></strong></div>
+                <div>• Konfigürasyon: <strong class="text-emerald-400">.env başarıyla yazıldı</strong></div>
             </div>
-            <div class="pt-4">
+
+            <!-- Cron Bilgilendirme -->
+            <div class="p-3.5 bg-slate-900/50 border border-slate-700 rounded-xl text-left text-xs text-slate-400 space-y-1">
+                <div class="font-bold text-slate-200">⏱️ Otomatik Rapor Cron Komutu:</div>
+                <p class="text-slate-400 text-[11px]">Sunucunuzun Crontab veya cPanel Cron Jobs bölümüne ekleyebilirsiniz:</p>
+                <div class="p-2 bg-slate-950 rounded-lg text-emerald-400 font-mono text-[11px] break-all select-all">
+                    0 9 * * * curl -s "<?= htmlspecialchars($appUrl) ?>/cron-mail.php?token=<?= htmlspecialchars($cronSecret) ?>" > /dev/null 2>&1
+                </div>
+            </div>
+
+            <div class="pt-2">
                 <a href="login.php" class="block w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl font-bold text-sm transition shadow-lg shadow-blue-600/30">
                     Sisteme Giriş Yap →
                 </a>
@@ -480,38 +548,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['kurulum_yap'])) {
             </p>
         </div>
     <?php else: ?>
-        <form method="POST" class="space-y-5">
-            <!-- Veritabanı Bilgileri -->
+        <form method="POST" class="space-y-6">
+            
+            <!-- 1. Uygulama Ayarları -->
             <div>
                 <h3 class="text-xs font-bold uppercase tracking-wider text-blue-400 mb-3 flex items-center gap-1.5">
-                    <span>🗄️ Veritabanı Bağlantısı</span>
+                    <span>🌐 Uygulama Ayarları</span>
+                </h3>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Ortam (APP_ENV)</label>
+                        <select name="app_env" class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                            <option value="production" <?= (($_POST['app_env'] ?? 'production') === 'production') ? 'selected' : '' ?>>production (Canlı)</option>
+                            <option value="local" <?= (($_POST['app_env'] ?? '') === 'local') ? 'selected' : '' ?>>local (Geliştirici)</option>
+                        </select>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Kurulu Web Dizini (APP_URL)</label>
+                        <input type="url" name="app_url" value="<?= htmlspecialchars($_POST['app_url'] ?? $defaultAppUrl) ?>" required
+                            placeholder="http://localhost/stok-takip"
+                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Veritabanı Bilgileri -->
+            <div class="pt-4 border-t border-slate-700/80">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-blue-400 mb-3 flex items-center gap-1.5">
+                    <span>🗄️ Veritabanı Bağlantısı (MySQL)</span>
                 </h3>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-xs font-semibold text-slate-300 mb-1">MySQL Sunucusu</label>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">MySQL Sunucusu (DB_HOST)</label>
                         <input type="text" name="db_host" value="<?= htmlspecialchars($_POST['db_host'] ?? 'localhost') ?>" required
-                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono">
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-slate-300 mb-1">Veritabanı Adı</label>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Veritabanı Adı (DB_NAME)</label>
                         <input type="text" name="db_name" value="<?= htmlspecialchars($_POST['db_name'] ?? 'stok_takip') ?>" required
-                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono">
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-slate-300 mb-1">Veritabanı Kullanıcısı</label>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Veritabanı Kullanıcısı (DB_USER)</label>
                         <input type="text" name="db_user" value="<?= htmlspecialchars($_POST['db_user'] ?? 'root') ?>" required
-                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono">
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-slate-300 mb-1">Veritabanı Şifresi</label>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Veritabanı Şifresi (DB_PASS)</label>
                         <input type="password" name="db_pass" value="<?= htmlspecialchars($_POST['db_pass'] ?? '') ?>" placeholder="Varsa şifreniz"
                             class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none">
                     </div>
                 </div>
             </div>
 
-            <!-- Yönetici Hesabı -->
-            <div class="pt-3 border-t border-slate-700/80">
+            <!-- 3. Yönetici Hesabı -->
+            <div class="pt-4 border-t border-slate-700/80">
                 <h3 class="text-xs font-bold uppercase tracking-wider text-blue-400 mb-3 flex items-center gap-1.5">
                     <span>👤 İlk Yönetici Hesabı</span>
                 </h3>
@@ -534,18 +625,95 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['kurulum_yap'])) {
                 </div>
             </div>
 
+            <!-- 4. Cron ve Güvenlik -->
+            <div class="pt-4 border-t border-slate-700/80">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-amber-400 mb-3 flex items-center gap-1.5">
+                    <span>🛡️ Cron ve Güvenlik Anahtarı</span>
+                </h3>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">Cron Güvenlik Tokenı (CRON_SECRET)</label>
+                    <input type="text" name="cron_secret" value="<?= htmlspecialchars($_POST['cron_secret'] ?? $defaultCronSecret) ?>" required
+                        class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-amber-300 focus:ring-2 focus:ring-amber-500 outline-none font-mono">
+                    <p class="text-[11px] text-slate-400 mt-1">cron-mail.php çağrıldığında yetkisiz erişimi engeller. Otomatik güvenli bir anahtar üretilmiştir.</p>
+                </div>
+            </div>
+
+            <!-- 5. Google Gemini API (Opsiyonel) -->
+            <div class="pt-4 border-t border-slate-700/80">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-purple-400 mb-3 flex items-center gap-1.5">
+                    <span>🤖 Google Gemini API (Opsiyonel - Kiler Şefi)</span>
+                </h3>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">Gemini API Anahtarı (GEMINI_API_KEY)</label>
+                    <input type="text" name="gemini_api_key" value="<?= htmlspecialchars($_POST['gemini_api_key'] ?? '') ?>" placeholder="AIzaSy... (Opsiyonel)"
+                        class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-purple-300 focus:ring-2 focus:ring-purple-500 outline-none font-mono">
+                    <p class="text-[11px] text-slate-400 mt-1">Yapay Zeka Destekli Kiler Şefi (sef.php) için Google AI Studio anahtarınız. Boş bırakılabilir, sonradan .env içine eklenebilir.</p>
+                </div>
+            </div>
+
+            <!-- 6. SMTP E-Posta Ayarları (Opsiyonel) -->
+            <div class="pt-4 border-t border-slate-700/80">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-3 flex items-center gap-1.5">
+                    <span>📧 SMTP Mail Ayarları (Opsiyonel - Bildirim & Raporlar)</span>
+                </h3>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                    <div class="sm:col-span-2">
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">SMTP Sunucusu (SMTP_HOST)</label>
+                        <input type="text" name="smtp_host" value="<?= htmlspecialchars($_POST['smtp_host'] ?? '') ?>" placeholder="mail.domain.com.tr"
+                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-emerald-500 outline-none font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Port (SMTP_PORT)</label>
+                        <input type="number" name="smtp_port" value="<?= htmlspecialchars($_POST['smtp_port'] ?? '587') ?>" placeholder="587"
+                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-emerald-500 outline-none font-mono">
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Kullanıcı Adı (SMTP_USER)</label>
+                        <input type="text" name="smtp_user" value="<?= htmlspecialchars($_POST['smtp_user'] ?? '') ?>" placeholder="bildirim@domain.com.tr"
+                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Şifre (SMTP_PASS)</label>
+                        <input type="password" name="smtp_pass" value="<?= htmlspecialchars($_POST['smtp_pass'] ?? '') ?>" placeholder="E-posta şifreniz"
+                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Güvenlik (SMTP_SECURE)</label>
+                        <select name="smtp_secure" class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-emerald-500 outline-none">
+                            <option value="tls" <?= (($_POST['smtp_secure'] ?? 'tls') === 'tls') ? 'selected' : '' ?>>tls (Önerilen - 587)</option>
+                            <option value="ssl" <?= (($_POST['smtp_secure'] ?? '') === 'ssl') ? 'selected' : '' ?>>ssl (465)</option>
+                            <option value="none" <?= (($_POST['smtp_secure'] ?? '') === 'none') ? 'selected' : '' ?>>none (Şifresiz)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Gönderen E-Posta (MAIL_FROM_ADDRESS)</label>
+                        <input type="text" name="mail_from_address" value="<?= htmlspecialchars($_POST['mail_from_address'] ?? '') ?>" placeholder="bildirim@domain.com.tr"
+                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Gönderen İsmi (MAIL_FROM_NAME)</label>
+                        <input type="text" name="mail_from_name" value="<?= htmlspecialchars($_POST['mail_from_name'] ?? 'StokTakip Bildirim') ?>" placeholder="StokTakip Bildirim"
+                            class="w-full p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                </div>
+            </div>
+
             <!-- Bilgilendirme Kartı -->
             <div class="p-3.5 bg-slate-900/60 border border-slate-700/80 rounded-xl text-xs text-slate-400 space-y-1">
                 <div class="font-bold text-slate-300">✨ Kurulum Neleri İçerir?</div>
                 <div>• 21 Kategori (Hazır Yemek, Bakliyat, Et, Süt, Temizlik vb.) ve yüzlerce alt kategori</div>
                 <div>• Cins bazlı akıllı stok eşikleri ve standart birim kuralları (Et: Kg, diğerleri: Adet)</div>
                 <div>• Varsayılan Konum (Ev > Mutfak > Buzdolabı & Kiler Dolabı)</div>
-                <div>• Otomatik <code>.env</code> dosyası ve güvenlik kilidi (<code>installed.lock</code>)</div>
+                <div>• Kullanım senaryonuza göre tam teşekküllü <code>.env</code> dosyası ve güvenlik kilidi</div>
             </div>
 
             <button type="submit" name="kurulum_yap" value="1"
                 class="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl font-bold text-sm transition shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2">
-                <span>⚡ Kurulumu Başlat ve Tamamla</span>
+                <span>⚡ Kurulumu Başlat ve .env Dosyasını Oluştur</span>
             </button>
         </form>
     <?php endif; ?>
